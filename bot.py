@@ -55,5 +55,5 @@ async def main():
             print("❌ 錯誤：找不到 DISCORD_TOKEN，請檢查 .env 檔案或 Render 環境變數設定！")
 
 if __name__ == "__main__":
+    keep_alive()
     asyncio.run(main())
-    bot.run(os.getenv("DISCORD_TOKEN"))
