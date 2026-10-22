@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from db import get_db_connection  # 引入雲端資料庫連線模組
+from db import get_db_connection
 
 class Profile(commands.Cog):
     def __init__(self, bot):
@@ -9,25 +9,11 @@ class Profile(commands.Cog):
 
     @app_commands.command(name="屬性", description="查看你的個人特務檔案與當前屬性")
     async def profile(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # 確保玩家表格存在 (PostgreSQL 語法)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS players (
-                user_id BIGINT PRIMARY KEY,
-                role TEXT,
-                hp INTEGER DEFAULT 100,
-                max_hp INTEGER DEFAULT 100,
-                atk INTEGER DEFAULT 25,
-                def INTEGER DEFAULT 10,
-                speed INTEGER DEFAULT 20,
-                gold INTEGER DEFAULT 100
-            )
-        """)
-        conn.commit()
-
-        # 查詢玩家資料 (使用 %s 佔位符)
         cursor.execute("SELECT role, hp, max_hp, atk, def, speed, gold FROM players WHERE user_id = %s", (interaction.user.id,))
         result = cursor.fetchone()
         cursor.close()
@@ -50,7 +36,7 @@ class Profile(commands.Cog):
         embed.add_field(name="⚡ 速度", value=f"{speed}", inline=True)
         embed.add_field(name="💰 金幣資產", value=f"{gold} G", inline=True)
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Profile(bot))

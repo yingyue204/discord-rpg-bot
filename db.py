@@ -2,7 +2,6 @@ import os
 import psycopg2
 
 def get_db_connection():
-    # 自動讀取 Render 設定的 DATABASE_URL
     db_url = os.environ.get("DATABASE_URL")
     if not db_url:
         raise ValueError("找不到 DATABASE_URL 環境變數，請確認 Render Environment 設定！")

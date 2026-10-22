@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from db import get_db_connection  # 引入雲端資料庫連線模組
+from db import get_db_connection
 
 class RoleSelectView(discord.ui.View):
     def __init__(self):
@@ -24,7 +24,6 @@ class RoleSelectView(discord.ui.View):
         ]
     )
     async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
-        # 1. 立即延期回應，避免 Discord 3秒逾時
         await interaction.response.defer(ephemeral=True)
 
         selected_role = select.values[0]
@@ -33,21 +32,6 @@ class RoleSelectView(discord.ui.View):
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # 確保玩家表格存在 (PostgreSQL 語法)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS players (
-                user_id BIGINT PRIMARY KEY,
-                role TEXT,
-                hp INTEGER,
-                max_hp INTEGER,
-                atk INTEGER,
-                def INTEGER,
-                speed INTEGER,
-                gold INTEGER DEFAULT 100
-            )
-        """)
-
-        # 檢查是否已選擇過職業 (使用 %s 佔位符)
         cursor.execute("SELECT role FROM players WHERE user_id = %s", (interaction.user.id,))
         result = cursor.fetchone()
 
@@ -60,7 +44,6 @@ class RoleSelectView(discord.ui.View):
             )
             return
 
-        # 1. 寫入資料庫 (使用 %s 佔位符)
         cursor.execute("""
             INSERT INTO players (user_id, role, hp, max_hp, atk, def, speed, gold)
             VALUES (%s, %s, %s, %s, %s, %s, %s, 100)
@@ -77,7 +60,6 @@ class RoleSelectView(discord.ui.View):
         cursor.close()
         conn.close()
 
-        # 2. 自動賦予 Discord 伺服器真實身分組
         guild = interaction.guild
         member = interaction.user
         role_to_give = discord.utils.get(guild.roles, name=selected_role)
@@ -92,7 +74,6 @@ class RoleSelectView(discord.ui.View):
         else:
             role_msg = f"\n⚠️ 伺服器中找不到名為「{selected_role}」的身分組，請管理員建立對應身分組！"
 
-        # 3. 使用 followup 發送最後結果
         await interaction.followup.send(
             f"🎉 成功選擇職業【**{selected_role}**】！\n"
             f"❤️ 血量: {stats['hp']} | ⚔️ 攻擊力: {stats['atk']} | 🛡️ 防禦力: {stats['def']} | ⚡ 速度: {stats['speed']}"

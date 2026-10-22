@@ -1,6 +1,2 @@
 discord.py
-python-dotenv
-aiohttp
-discord.py
-flask
 psycopg2-binary
