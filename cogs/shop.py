@@ -15,10 +15,11 @@ class Shop(commands.Cog):
         conn.commit()
         conn.close()
 
-        embed = discord.Embed(title="🛒 冒險者商店", description="使用 `/buy <商品名稱>` 來購買武器或道具！", color=discord.Color.gold())
-        embed.add_field(name="⚔️ 鐵劍 (攻擊力 +10)", value="價格: 100 G", inline=False)
-        embed.add_field(name="🛡️ 鐵甲 (防禦力 +5)", value="價格: 80 G", inline=False)
-        embed.add_field(name="🧪 生命藥水 (恢復 50 HP)", value="價格: 30 G", inline=False)
+        # 在介面中清楚標示價格
+        embed = discord.Embed(title="🛒 冒險者商店", description="使用 `/buy <商品>` 來購買武器或道具！", color=discord.Color.gold())
+        embed.add_field(name="⚔️ 鐵劍", value="攻擊力 +10\n**價格: 100 G**", inline=False)
+        embed.add_field(name="🛡️ 鐵甲", value="防禦力 +5\n**價格: 80 G**", inline=False)
+        embed.add_field(name="🧪 生命藥水", value="恢復 50 HP\n**價格: 30 G**", inline=False)
         
         await interaction.response.send_message(embed=embed)
 
@@ -47,7 +48,6 @@ class Shop(commands.Cog):
         conn = sqlite3.connect("rpg.db")
         cursor = conn.cursor()
         
-        # 檢查玩家金幣
         cursor.execute("SELECT gold FROM players WHERE user_id = ?", (interaction.user.id,))
         result = cursor.fetchone()
         
@@ -56,7 +56,6 @@ class Shop(commands.Cog):
             await interaction.response.send_message(f"❌ 你的金幣不足！購買 **{item_name}** 需要 {cost} G。", ephemeral=True)
             return
 
-        # 扣除金幣並加入背包
         cursor.execute("UPDATE players SET gold = gold - ? WHERE user_id = ?", (cost, interaction.user.id))
         
         cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (interaction.user.id, item_name))

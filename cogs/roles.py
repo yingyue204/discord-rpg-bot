@@ -30,7 +30,6 @@ class RoleSelectView(discord.ui.View):
         conn = sqlite3.connect("rpg.db")
         cursor = conn.cursor()
 
-        # 初始化玩家表格
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS players (
                 user_id INTEGER PRIMARY KEY,
@@ -56,7 +55,7 @@ class RoleSelectView(discord.ui.View):
             )
             return
 
-        # 寫入或更新屬性數值
+        # 寫入職業與屬性
         cursor.execute("""
             INSERT INTO players (user_id, role, hp, max_hp, atk, def, speed, gold)
             VALUES (?, ?, ?, ?, ?, ?, ?, 100)
@@ -82,6 +81,30 @@ class Roles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    # 1. 廣播職業介紹指南與面板（純介紹 + 選單）
+    @commands.command(name="setup_roles")
+    @commands.has_permissions(administrator=True)
+    async def setup_roles_prefix(self, ctx):
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+
+        embed = discord.Embed(
+            title="💻 【虛擬次元觀測站 · 特務職業指南】",
+            description="歡迎來到虛擬次元！以下為各大特務職業的詳細介紹與初始屬性配置：",
+            color=discord.Color.dark_embed()
+        )
+        embed.add_field(name="駭客", value="• 職業簡介：專精於系統超頻與軟體穿透的極速專家。\n• 初始屬性：❤️ 血量 100 | ⚔️ 攻擊 25 | 🛡️ 防禦 10 | ⚡ 速度 35", inline=False)
+        embed.add_field(name="磁暴重裝", value="• 職業簡介：配備重型外骨骼動力裝甲與電磁防禦盾。\n• 初始屬性：❤️ 血量 180 | ⚔️ 攻擊 18 | 🛡️ 防禦 35 | ⚡ 速度 15", inline=False)
+        embed.add_field(name="異能覺醒", value="• 職業簡介：突破人體與科技極限的超自然異能者。\n• 初始屬性：❤️ 血量 110 | ⚔️ 攻擊 35 (最高) | 🛡️ 防禦 15 | ⚡ 速度 20", inline=False)
+        embed.add_field(name="神射手", value="• 職業簡介：配備高倍率戰術鏡與高穿透電磁步槍的遠程專家。\n• 初始屬性：❤️ 血量 115 | ⚔️ 攻擊 30 | 🛡️ 防禦 16 | ⚡ 速度 25", inline=False)
+        embed.set_footer(text="請使用 /選擇身份 指令或點選下方選單來進行正式的職業身份綁定。")
+
+        view = RoleSelectView()
+        await ctx.send(embed=embed, view=view)
+
+    # 2. 個人斜線指令選擇職業
     @app_commands.command(name="選擇身份", description="選擇你的角色職業身份")
     async def select_role_cmd(self, interaction: discord.Interaction):
         view = RoleSelectView()
