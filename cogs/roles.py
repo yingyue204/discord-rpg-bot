@@ -55,7 +55,7 @@ class RoleSelectView(discord.ui.View):
             )
             return
 
-        # 寫入職業與屬性
+        # 1. 寫入資料庫
         cursor.execute("""
             INSERT INTO players (user_id, role, hp, max_hp, atk, def, speed, gold)
             VALUES (?, ?, ?, ?, ?, ?, ?, 100)
@@ -71,9 +71,25 @@ class RoleSelectView(discord.ui.View):
         conn.commit()
         conn.close()
 
+        # 2. 自動賦予 Discord 伺服器真實身分組
+        guild = interaction.guild
+        member = interaction.user
+        role_to_give = discord.utils.get(guild.roles, name=selected_role)
+
+        role_msg = ""
+        if role_to_give:
+            try:
+                await member.add_roles(role_to_give)
+                role_msg = f"\n✨ 已成功為你掛載 Discord 身分組：【{selected_role}】"
+            except Exception as e:
+                role_msg = f"\n⚠️ 身分組賦予失敗（請確認機器人權限是否高於該身分組）：{e}"
+        else:
+            role_msg = f"\n⚠️ 伺服器中找不到名為「{selected_role}」的身分組，請管理員建立對應身分組！"
+
         await interaction.response.send_message(
             f"🎉 成功選擇職業【**{selected_role}**】！\n"
-            f"❤️ 血量: {stats['hp']} | ⚔️ 攻擊力: {stats['atk']} | 🛡️ 防禦力: {stats['def']} | ⚡ 速度: {stats['speed']}",
+            f"❤️ 血量: {stats['hp']} | ⚔️ 攻擊力: {stats['atk']} | 🛡️ 防禦力: {stats['def']} | ⚡ 速度: {stats['speed']}"
+            f"{role_msg}",
             ephemeral=True
         )
 
@@ -81,7 +97,6 @@ class Roles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # 1. 廣播職業介紹指南與面板（純介紹 + 選單）
     @commands.command(name="setup_roles")
     @commands.has_permissions(administrator=True)
     async def setup_roles_prefix(self, ctx):
@@ -104,7 +119,6 @@ class Roles(commands.Cog):
         view = RoleSelectView()
         await ctx.send(embed=embed, view=view)
 
-    # 2. 個人斜線指令選擇職業
     @app_commands.command(name="選擇身份", description="選擇你的角色職業身份")
     async def select_role_cmd(self, interaction: discord.Interaction):
         view = RoleSelectView()
