@@ -24,18 +24,23 @@ class RoleSelectView(discord.ui.View):
         ]
     )
     async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        print("DEBUG: 收到選單點擊事件，準備 defer...")
         await interaction.response.defer(ephemeral=True)
+        print("DEBUG: defer 成功")
 
         selected_role = select.values[0]
         stats = self.ROLE_STATS[selected_role]
 
+        print("DEBUG: 準備連線資料庫...")
         conn = get_db_connection()
         cursor = conn.cursor()
+        print("DEBUG: 資料庫連線成功")
 
         cursor.execute("SELECT role FROM players WHERE user_id = %s", (interaction.user.id,))
         result = cursor.fetchone()
 
         if result and result[0]:
+            print(f"DEBUG: 玩家已經選擇過職業: {result[0]}")
             cursor.close()
             conn.close()
             await interaction.followup.send(
@@ -44,6 +49,7 @@ class RoleSelectView(discord.ui.View):
             )
             return
 
+        print("DEBUG: 準備寫入資料庫...")
         cursor.execute("""
             INSERT INTO players (user_id, role, hp, max_hp, atk, def, speed, gold)
             VALUES (%s, %s, %s, %s, %s, %s, %s, 100)
@@ -59,6 +65,7 @@ class RoleSelectView(discord.ui.View):
         conn.commit()
         cursor.close()
         conn.close()
+        print("DEBUG: 資料庫寫入並關閉完成")
 
         guild = interaction.guild
         member = interaction.user
@@ -74,12 +81,14 @@ class RoleSelectView(discord.ui.View):
         else:
             role_msg = f"\n⚠️ 伺服器中找不到名為「{selected_role}」的身分組，請管理員建立對應身分組！"
 
+        print("DEBUG: 準備發送 followup 回應...")
         await interaction.followup.send(
             f"🎉 成功選擇職業【**{selected_role}**】！\n"
             f"❤️ 血量: {stats['hp']} | ⚔️ 攻擊力: {stats['atk']} | 🛡️ 防禦力: {stats['def']} | ⚡ 速度: {stats['speed']}"
             f"{role_msg}",
             ephemeral=True
         )
+        print("DEBUG: 回應發送完成")
 
 class Roles(commands.Cog):
     def __init__(self, bot):
