@@ -24,6 +24,9 @@ class RoleSelectView(discord.ui.View):
         ]
     )
     async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        # 1. 立即延期回應，避免 Discord 3秒逾時
+        await interaction.response.defer(ephemeral=True)
+
         selected_role = select.values[0]
         stats = self.ROLE_STATS[selected_role]
 
@@ -51,7 +54,7 @@ class RoleSelectView(discord.ui.View):
         if result and result[0]:
             cursor.close()
             conn.close()
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"⚠️ 你已經綁定過職業【**{result[0]}**】了！無法重複選擇。",
                 ephemeral=True
             )
@@ -89,7 +92,8 @@ class RoleSelectView(discord.ui.View):
         else:
             role_msg = f"\n⚠️ 伺服器中找不到名為「{selected_role}」的身分組，請管理員建立對應身分組！"
 
-        await interaction.response.send_message(
+        # 3. 使用 followup 發送最後結果
+        await interaction.followup.send(
             f"🎉 成功選擇職業【**{selected_role}**】！\n"
             f"❤️ 血量: {stats['hp']} | ⚔️ 攻擊力: {stats['atk']} | 🛡️ 防禦力: {stats['def']} | ⚡ 速度: {stats['speed']}"
             f"{role_msg}",
