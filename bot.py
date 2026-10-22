@@ -3,6 +3,13 @@ import asyncio
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+from keep_alive import keep_alive  # 引入保持連線功能
+
+# ... (中間原本載入 cogs 的程式碼保持不變) ...
+
+if __name__ == "__main__":
+    keep_alive()  # 啟動網頁伺服器以通過 Render 的 Port 檢查
+    asyncio.run(main())
 
 # 載入環境變數
 load_dotenv()
