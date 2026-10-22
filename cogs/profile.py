@@ -7,7 +7,7 @@ class Profile(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="屬性", description="查看你的個人特務檔案")
+    @app_commands.command(name="屬性", description="查看個人特務檔案")
     async def profile(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 

@@ -1,16 +1,18 @@
-from flask import Flask
-from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 
-app = Flask('')
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Bot is alive and running 24/7!")
 
-@app.route('/')
-def home():
-    return "Hello, I am alive!"
-
-def run():
-    # 監聽 0.0.0.0 和 8080 連接埠
-    app.run(host='0.0.0.0', port=8080)
+def run_server():
+    server = HTTPServer(('0.0.0.0', 10000), SimpleHandler)
+    server.serve_forever()
 
 def keep_alive():
-    t = Thread(target=run)
+    t = threading.Thread(target=run_server)
+    t.daemon = True
     t.start()

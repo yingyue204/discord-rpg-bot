@@ -1,82 +1,56 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import sqlite3
+from db import get_db_connection
+
+class ShopView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+
+    @discord.ui.select(
+        placeholder="請選擇想要購買的道具...",
+        options=[
+            discord.SelectOption(label="生命藥水", description="價格: 30 G", value="生命藥水"),
+            discord.SelectOption(label="能量飲料", description="價格: 50 G", value="能量飲料"),
+        ]
+    )
+    async def select_shop(self, interaction: discord.Interaction, select: discord.ui.Select):
+        await interaction.response.defer(ephemeral=True)
+        item_name = select.values[0]
+        cost = 30 if item_name == "生命藥水" else 50
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT gold FROM players WHERE user_id = ?", (interaction.user.id,))
+        res = cursor.fetchone()
+        
+        if not res or res[0] < cost:
+            cursor.close()
+            conn.close()
+            await interaction.followup.send(f"❌ 金幣不足！需要 {cost} G。", ephemeral=True)
+            return
+
+        cursor.execute("UPDATE players SET gold = gold - ? WHERE user_id = ?", (cost, interaction.user.id))
+        cursor.execute("""
+            INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)
+            ON CONFLICT(user_id, item_name) DO UPDATE SET quantity = quantity + 1
+        """, (interaction.user.id, item_name))
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        await interaction.followup.send(f"✅ 成功購買【{item_name}】！已放進隨身背包。", ephemeral=True)
 
 class Shop(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="shop", description="查看武器與道具商店價格")
+    @app_commands.command(name="shop", description="前往特務商城購買補給品")
     async def shop(self, interaction: discord.Interaction):
-        conn = sqlite3.connect("rpg.db")
-        cursor = conn.cursor()
-        cursor.execute("CREATE TABLE IF NOT EXISTS inventory (user_id INTEGER, item_name TEXT, quantity INTEGER)")
-        conn.commit()
-        conn.close()
-
-        # 建立帶有明確價格標示的商店面板
-        embed = discord.Embed(
-            title="🛒 【虛擬次元 · 特務裝備商店】", 
-            description="請使用 `/buy <商品名稱>` 來進行裝備或道具購買！\n━━━━━━━━━━━━━━━━━━━━", 
-            color=discord.Color.gold()
-        )
-        embed.add_field(name="⚔️ 鐵劍 (武器)", value="• 屬性效果：攻擊力 +10\n• 販售價格：**100 G**", inline=False)
-        embed.add_field(name="🛡️ 鐵甲 (防具)", value="• 屬性效果：防禦力 +5\n• 販售價格：**80 G**", inline=False)
-        embed.add_field(name="🧪 生命藥水 (消耗品)", value="• 屬性效果：恢復 50 HP\n• 販售價格：**30 G**", inline=False)
-        embed.set_footer(text="提示：可以使用 /adventure 冒險獲取金幣來購買裝備！")
-        
-        await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(name="buy", description="購買商店中的物品")
-    @app_commands.describe(item="你想購買的物品名稱")
-    @app_commands.choices(item=[
-        app_commands.Choice(name="⚔️ 鐵劍 (100 G)", value="iron_sword"),
-        app_commands.Choice(name="🛡️ 鐵甲 (80 G)", value="iron_armor"),
-        app_commands.Choice(name="🧪 生命藥水 (30 G)", value="health_potion")
-    ])
-    async def buy(self, interaction: discord.Interaction, item: str):
-        prices = {
-            "iron_sword": 100,
-            "iron_armor": 80,
-            "health_potion": 30
-        }
-        item_names = {
-            "iron_sword": "鐵劍",
-            "iron_armor": "鐵甲",
-            "health_potion": "生命藥水"
-        }
-        
-        cost = prices[item]
-        item_name = item_names[item]
-
-        conn = sqlite3.connect("rpg.db")
-        cursor = conn.cursor()
-        
-        # 檢查玩家金幣
-        cursor.execute("SELECT gold FROM players WHERE user_id = ?", (interaction.user.id,))
-        result = cursor.fetchone()
-        
-        if not result or result[0] < cost:
-            conn.close()
-            await interaction.response.send_message(f"❌ 你的金幣不足！購買 **{item_name}** 需要 {cost} G。", ephemeral=True)
-            return
-
-        # 扣除金幣並加入背包
-        cursor.execute("UPDATE players SET gold = gold - ? WHERE user_id = ?", (cost, interaction.user.id))
-        
-        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (interaction.user.id, item_name))
-        inv_result = cursor.fetchone()
-        
-        if inv_result:
-            cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (interaction.user.id, item_name))
-        else:
-            cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (interaction.user.id, item_name))
-            
-        conn.commit()
-        conn.close()
-
-        await interaction.response.send_message(f"🎉 成功購買 **{item_name}**！花費了 {cost} G。", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        embed = discord.Embed(title="🛒 【特務商城】", description="請從選單選擇要購買的商品：\n• **生命藥水** (30 G)\n• **能量飲料** (50 G)", color=discord.Color.blue())
+        view = ShopView()
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Shop(bot))
