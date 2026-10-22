@@ -70,10 +70,10 @@ class Roles(commands.Cog):
             description="⚠️ **注意：職業一經選擇即無法更換，請謹慎考慮！**\n請詳閱下方特務職業檔案後，點擊對應按鈕進行身分綁定。",
             color=discord.Color.blue()
         )
-        embed.add_field(name="⚡ 駭客", value="• 職業簡介：專精於系統超頻與軟體穿透的極速專家。\n• 初始屬性：❤️ 血量 100 | ⚔️ 攻擊 25 | 🛡️ 防禦 10 | ⚡ 速度 35 | 🌟 爆擊 20%", inline=False)
-        embed.add_field(name="🛡️ 磁暴重裝", value="• 職業簡介：配備重型外骨骼動力裝甲與電磁防禦盾。\n• 初始屬性：❤️ 血量 180 | ⚔️ 攻擊 18 | 🛡️ 防禦 35 | ⚡ 速度 15 | 🌟 爆擊 5%", inline=False)
-        embed.add_field(name="⚡ 異能覺醒", value="• 職業簡介：突破人體與科技極限的超自然異能者。\n• 初始屬性：❤️ 血量 110 | ⚔️ 攻擊 35 (最高) | 🛡️ 防禦 15 | ⚡ 速度 22 | 🌟 爆擊 5%", inline=False)
-        embed.add_field(name="🏹 神射手", value="• 職業簡介：配備高倍率戰術鏡與高穿透電磁步槍的遠程專家。\n• 初始屬性：❤️ 血量 115 | ⚔️ 攻擊 30 | 🛡️ 防禦 10 | ⚡ 速度 26 | 🌟 爆擊 15%", inline=False)
+        embed.add_field(name="駭客", value="• 職業簡介：專精於系統超頻與軟體穿透的極速專家。\n• 初始屬性：❤️ 血量 100 | ⚔️ 攻擊 25 | 🛡️ 防禦 10 | ⚡ 速度 35 | 🌟 爆擊 20%", inline=False)
+        embed.add_field(name="磁暴重裝", value="• 職業簡介：配備重型外骨骼動力裝甲與電磁防禦盾。\n• 初始屬性：❤️ 血量 180 | ⚔️ 攻擊 18 | 🛡️ 防禦 35 | ⚡ 速度 15 | 🌟 爆擊 5%", inline=False)
+        embed.add_field(name="異能覺醒", value="• 職業簡介：突破人體與科技極限的超自然異能者。\n• 初始屬性：❤️ 血量 110 | ⚔️ 攻擊 35 (最高) | 🛡️ 防禦 15 | ⚡ 速度 22 | 🌟 爆擊 5%", inline=False)
+        embed.add_field(name="神射手", value="• 職業簡介：配備高倍率戰術鏡與高穿透電磁步槍的遠程專家。\n• 初始屬性：❤️ 血量 115 | ⚔️ 攻擊 30 | 🛡️ 防禦 10 | ⚡ 速度 26 | 🌟 爆擊 15%", inline=False)
         await interaction.followup.send(embed=embed, view=self.RoleSelectView(), ephemeral=True)
 
     @commands.command(name="setup_roles", description="發送純職業介紹說明面板")
@@ -89,8 +89,10 @@ class Roles(commands.Cog):
             description="歡迎來到虛擬次元！以下為各大特務職業的詳細介紹與初始屬性配置：",
             color=discord.Color.dark_embed()
         )
-        embed.add_field(name="⚡ 駭客", value="• 職業簡介：專精於系統超頻與軟體穿透的極速專家。", inline=False)
-        embed.add_field(name="🛡️ 磁暴重裝", value="• 職業簡介：配備重型外骨骼動力裝甲與電磁防禦盾。", inline=False)
+        embed.add_field(name="駭客", value="• 職業簡介：專精於系統超頻與軟體穿透的極速專家。\n• 初始屬性：❤️ 血量 100 | ⚔️ 攻擊 25 | 🛡️ 防禦 10 | ⚡ 速度 35 | 🌟 爆擊 20%", inline=False)
+        embed.add_field(name="磁暴重裝", value="• 職業簡介：配備重型外骨骼動力裝甲與電磁防禦盾。\n• 初始屬性：❤️ 血量 180 | ⚔️ 攻擊 18 | 🛡️ 防禦 35 | ⚡ 速度 15 | 🌟 爆擊 5%", inline=False)
+        embed.add_field(name="異能覺醒", value="• 職業簡介：突破人體與科技極限的超自然異能者。\n• 初始屬性：❤️ 血量 110 | ⚔️ 攻擊 35 (最高) | 🛡️ 防禦 15 | ⚡ 速度 22 | 🌟 爆擊 5%", inline=False)
+        embed.add_field(name="神射手", value="• 職業簡介：配備高倍率戰術鏡與高穿透電磁步槍的遠程專家。\n• 初始屬性：❤️ 血量 115 | ⚔️ 攻擊 30 | 🛡️ 防禦 10 | ⚡ 速度 26 | 🌟 爆擊 15%", inline=False)
         embed.set_footer(text="請使用 /選擇身分 指令來進行正式的職業身分綁定。")
         await ctx.send(embed=embed, view=self.RoleSelectView())
 
