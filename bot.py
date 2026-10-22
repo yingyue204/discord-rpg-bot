@@ -4,6 +4,7 @@ import os
 import asyncio
 from keep_alive import keep_alive
 from db import get_db_connection
+from cogs.roles import RoleSelectView  # 引入職業選單類別
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -52,6 +53,10 @@ async def load_extensions():
 @bot.event
 async def on_ready():
     init_global_db()
+    
+    # 註冊持久化選單，確保重啟後選單依然有效
+    bot.add_view(RoleSelectView())
+    
     try:
         synced = await bot.tree.sync()
         print(f"✅ 已成功同步 {len(synced)} 個斜線指令！")
