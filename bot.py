@@ -18,6 +18,11 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 @bot.event
 async def on_ready():
     print(f"✅ 機器人已成功登入為：{bot.user} (ID: {bot.user.id})")
+    try:
+        synced = await bot.tree.sync()
+        print(f"✅ 已成功同步 {len(synced)} 個斜線指令！")
+    except Exception as e:
+        print(f"❌ 斜線指令同步失敗：{e}")
 
 # 動態載入 cogs 資料夾底下的所有模組
 async def load_extensions():

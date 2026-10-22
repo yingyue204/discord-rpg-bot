@@ -1,100 +1,94 @@
 import discord
-from discord import app_commands
 from discord.ext import commands
+from discord import app_commands
+import sqlite3
 
-ALL_CLASSES = ["駭客", "磁暴重裝", "異能覺醒", "神射手"]
+class RoleSelectView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    # 職業對應的初始數值設定
+    ROLE_STATS = {
+        "駭客": {"hp": 100, "atk": 25, "def": 10, "speed": 35},
+        "磁暴重裝": {"hp": 180, "atk": 18, "def": 35, "speed": 15},
+        "異能覺醒": {"hp": 110, "atk": 35, "def": 15, "speed": 20},
+        "神射手": {"hp": 115, "atk": 30, "def": 16, "speed": 25}
+    }
+
+    @discord.ui.select(
+        placeholder="請選擇你的特務職業...",
+        options=[
+            discord.SelectOption(label="駭客", description="專精系統超頻與極速專家"),
+            discord.SelectOption(label="磁暴重裝", description="重型外骨骼防禦專家"),
+            discord.SelectOption(label="異能覺醒", description="高攻擊力超自然異能者"),
+            discord.SelectOption(label="神射手", description="高穿透電磁步槍遠程專家"),
+        ]
+    )
+    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        selected_role = select.values[0]
+        stats = self.ROLE_STATS[selected_role]
+
+        conn = sqlite3.connect("rpg.db")
+        cursor = conn.cursor()
+
+        # 確保玩家表格具備職業與屬性欄位
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS players (
+                user_id INTEGER PRIMARY KEY,
+                role TEXT,
+                hp INTEGER,
+                max_hp INTEGER,
+                atk INTEGER,
+                def INTEGER,
+                speed INTEGER,
+                gold INTEGER DEFAULT 100
+            )
+        """)
+
+        # 檢查玩家是否已經選擇過職業
+        cursor.execute("SELECT role FROM players WHERE user_id = ?", (interaction.user.id,))
+        result = cursor.fetchone()
+
+        if result and result[0]:
+            current_role = result[0]
+            conn.close()
+            # 問題一解決方案：跳出已經綁定過的提醒提示
+            await interaction.response.send_message(
+                f"⚠️ 你已經綁定過職業【**{current_role}**】了！無法重複選擇。",
+                ephemeral=True
+            )
+            return
+
+        # 問題二解決方案：寫入玩家選擇的職業與對應數值
+        cursor.execute("""
+            INSERT INTO players (user_id, role, hp, max_hp, atk, def, speed, gold)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 100)
+            ON CONFLICT(user_id) DO UPDATE SET
+                role = excluded.role,
+                hp = excluded.hp,
+                max_hp = excluded.max_hp,
+                atk = excluded.atk,
+                def = excluded.def,
+                speed = excluded.speed
+        """, (interaction.user.id, selected_role, stats["hp"], stats["hp"], stats["atk"], stats["def"], stats["speed"]))
+
+        conn.commit()
+        conn.close()
+
+        await interaction.response.send_message(
+            f"🎉 成功選擇職業【**{selected_role}**】！\n"
+            f"❤️ 血量: {stats['hp']} | ⚔️ 攻擊力: {stats['atk']} | 🛡️ 防禦力: {stats['def']} | ⚡ 速度: {stats['speed']}",
+            ephemeral=True
+        )
 
 class Roles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.bot.add_view(self.RoleSelectView())
 
-    class RoleSelectView(discord.ui.View):
-        def __init__(self):
-            super().__init__(timeout=None)
-
-        async def assign_discord_role(self, interaction: discord.Interaction, target_role_name: str):
-            await interaction.response.defer(ephemeral=True)
-            guild = interaction.guild
-            member = interaction.user
-
-            if not guild:
-                await interaction.followup.send("❌ 此指令只能在伺服器中使用！", ephemeral=True)
-                return
-
-            existing_roles = [r.name for r in member.roles if any(k in r.name for k in ALL_CLASSES)]
-            
-            if existing_roles:
-                current_role_name = existing_roles[0].name
-                await interaction.followup.send(
-                    f"⛔ **無法變更職業！**\n你已經選擇過初始職業：**【{current_role_name}】**。\n職業選擇後即無法自行更換！", 
-                    ephemeral=True
-                )
-                return
-
-            target_role = discord.utils.get(guild.roles, name=target_role_name)
-            if not target_role:
-                try:
-                    target_role = await guild.create_role(name=target_role_name, reason="RPG 機器人自動建立職業身分組")
-                except discord.Forbidden:
-                    await interaction.followup.send(f"⚠️ 機器人權限不足，無法自動建立身分組【{target_role_name}】！", ephemeral=True)
-                    return
-
-            try:
-                await member.add_roles(target_role)
-                await interaction.followup.send(f"🎉 **綁定成功！**\n你已綁定 Discord 職業身分組：**【{target_role.name}】**！職業已鎖定。", ephemeral=True)
-            except discord.Forbidden:
-                await interaction.followup.send("⚠️ 機器人權限不足（請將機器人的身分組順序拉到最高）！", ephemeral=True)
-
-        @discord.ui.button(label="駭客", style=discord.ButtonStyle.primary, custom_id="role_hacker_btn")
-        async def role_hacker(self, interaction: discord.Interaction, button: discord.ui.Button):
-            await self.assign_discord_role(interaction, "駭客")
-
-        @discord.ui.button(label="磁暴重裝", style=discord.ButtonStyle.success, custom_id="role_heavy_btn")
-        async def role_heavy(self, interaction: discord.Interaction, button: discord.ui.Button):
-            await self.assign_discord_role(interaction, "磁暴重裝")
-
-        @discord.ui.button(label="異能覺醒", style=discord.ButtonStyle.danger, custom_id="role_esper_btn")
-        async def role_esper(self, interaction: discord.Interaction, button: discord.ui.Button):
-            await self.assign_discord_role(interaction, "異能覺醒")
-
-        @discord.ui.button(label="神射手", style=discord.ButtonStyle.secondary, custom_id="role_archer_btn")
-        async def role_archer(self, interaction: discord.Interaction, button: discord.ui.Button):
-            await self.assign_discord_role(interaction, "神射手")
-
-    @app_commands.command(name="選擇身分", description="選擇你的冒險職業，選擇後將永久鎖定")
-    async def choose_role(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        embed = discord.Embed(
-            title="🏷️ [虛擬次元觀測站・特務身分領取]",
-            description="⚠️ **注意：職業一經選擇即無法更換，請謹慎考慮！**\n請詳閱下方特務職業檔案後，點擊對應按鈕進行身分綁定。",
-            color=discord.Color.blue()
-        )
-        embed.add_field(name="駭客", value="• 職業簡介：專精於系統超頻與軟體穿透的極速專家。\n• 初始屬性：❤️ 血量 100 | ⚔️ 攻擊 25 | 🛡️ 防禦 10 | ⚡ 速度 35 | 🌟 爆擊 20%", inline=False)
-        embed.add_field(name="磁暴重裝", value="• 職業簡介：配備重型外骨骼動力裝甲與電磁防禦盾。\n• 初始屬性：❤️ 血量 180 | ⚔️ 攻擊 18 | 🛡️ 防禦 35 | ⚡ 速度 15 | 🌟 爆擊 5%", inline=False)
-        embed.add_field(name="異能覺醒", value="• 職業簡介：突破人體與科技極限的超自然異能者。\n• 初始屬性：❤️ 血量 110 | ⚔️ 攻擊 35 (最高) | 🛡️ 防禦 15 | ⚡ 速度 22 | 🌟 爆擊 5%", inline=False)
-        embed.add_field(name="神射手", value="• 職業簡介：配備高倍率戰術鏡與高穿透電磁步槍的遠程專家。\n• 初始屬性：❤️ 血量 115 | ⚔️ 攻擊 30 | 🛡️ 防禦 10 | ⚡ 速度 26 | 🌟 爆擊 15%", inline=False)
-        await interaction.followup.send(embed=embed, view=self.RoleSelectView(), ephemeral=True)
-
-    @commands.command(name="setup_roles", description="發送純職業介紹說明面板")
-    @commands.has_permissions(administrator=True)
-    async def setup_roles_prefix(self, ctx):
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-
-        embed = discord.Embed(
-            title="📖 [虛擬次元觀測站・特務職業指南]",
-            description="歡迎來到虛擬次元！以下為各大特務職業的詳細介紹與初始屬性配置：",
-            color=discord.Color.dark_embed()
-        )
-        embed.add_field(name="駭客", value="• 職業簡介：專精於系統超頻與軟體穿透的極速專家。\n• 初始屬性：❤️ 血量 100 | ⚔️ 攻擊 25 | 🛡️ 防禦 10 | ⚡ 速度 35 | 🌟 爆擊 20%", inline=False)
-        embed.add_field(name="磁暴重裝", value="• 職業簡介：配備重型外骨骼動力裝甲與電磁防禦盾。\n• 初始屬性：❤️ 血量 180 | ⚔️ 攻擊 18 | 🛡️ 防禦 35 | ⚡ 速度 15 | 🌟 爆擊 5%", inline=False)
-        embed.add_field(name="異能覺醒", value="• 職業簡介：突破人體與科技極限的超自然異能者。\n• 初始屬性：❤️ 血量 110 | ⚔️ 攻擊 35 (最高) | 🛡️ 防禦 15 | ⚡ 速度 22 | 🌟 爆擊 5%", inline=False)
-        embed.add_field(name="神射手", value="• 職業簡介：配備高倍率戰術鏡與高穿透電磁步槍的遠程專家。\n• 初始屬性：❤️ 血量 115 | ⚔️ 攻擊 30 | 🛡️ 防禦 10 | ⚡ 速度 26 | 🌟 爆擊 15%", inline=False)
-        embed.set_footer(text="請使用 /選擇身分 指令來進行正式的職業身分綁定。")
-        await ctx.send(embed=embed)
+    @app_commands.command(name="選擇身份", description="選擇你的角色職業身份")
+    async def select_role_cmd(self, interaction: discord.Interaction):
+        view = RoleSelectView()
+        await interaction.response.send_message("請點選下方選單選擇你的職業身份：", view=view, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Roles(bot))
