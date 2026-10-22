@@ -52,8 +52,8 @@ async def main():
         if TOKEN:
             await bot.start(TOKEN)
         else:
-            print("❌ 錯誤：找不到 DISCORD_TOKEN，請檢查 .env 檔案或 Render 環境變數設定！")
+            print("❌ 錯誤：找不到 DISCORD_TOKEN")
 
 if __name__ == "__main__":
-    keep_alive()
-    asyncio.run(main())
+    keep_alive()          # 啟動保持連線伺服器
+    asyncio.run(main())   # 啟動機器人主程式
