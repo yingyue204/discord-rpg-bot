@@ -5,6 +5,17 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from keep_alive import keep_alive  # 引入保持連線伺服器
 
+bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+
+# ... 你的其他 cog 載入與事件 ...
+
+if __name__ == "__main__":
+    # 啟動保持活線的 Web 伺服器
+    keep_alive()
+    
+    # 啟動你的 Discord 機器人
+    bot.run("你的_DISCORD_TOKEN")
+    
 # 載入環境變數（如果在 Render 上則會直接讀取雲端設定）
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
