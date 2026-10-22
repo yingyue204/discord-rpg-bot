@@ -14,66 +14,32 @@ class Battle(commands.Cog):
 
         conn = get_db_connection()
         cursor = conn.cursor()
-
-        cursor.execute("SELECT role, hp, atk, def, gold FROM players WHERE user_id = %s", (interaction.user.id,))
+        cursor.execute("SELECT role, hp, atk, def, gold FROM players WHERE user_id = ?", (interaction.user.id,))
         player = cursor.fetchone()
 
         if not player or not player[0]:
             cursor.close()
             conn.close()
-            await interaction.followup.send("⚠️ 你尚未選擇職業！請先使用 `/選擇身份` 或在頻道點選職業選單。", ephemeral=True)
+            await interaction.followup.send("⚠️ 你尚未選擇職業！請先使用 `/選擇身份`。", ephemeral=True)
             return
 
         role_name, player_hp, player_atk, player_def, player_gold = player
-
-        monsters = [
-            {"name": "👾 變異流浪體", "hp": 60, "atk": 15, "exp": 20, "gold": 15},
-            {"name": "🤖 狂暴巡邏機械", "hp": 90, "atk": 22, "exp": 35, "gold": 25},
-            {"name": "🕷️ 電磁毒蛛", "hp": 50, "atk": 18, "exp": 15, "gold": 10}
-        ]
-        monster = random.choice(monsters)
-        monster_hp = monster["hp"]
-
+        monster = random.choice([
+            {"name": "👾 變異流浪體", "hp": 60, "atk": 15, "gold": 15},
+            {"name": "🤖 狂暴巡邏機械", "hp": 90, "atk": 22, "gold": 25}
+        ])
+        
         player_dmg = max(1, player_atk - 2)
-        monster_dmg = max(1, monster["atk"] - player_def)
-
-        logs = []
-        logs.append(f"⚔️ 你發動攻擊，對 **{monster['name']}** 造成了 **{player_dmg}** 點傷害！")
-        monster_hp -= player_dmg
-
-        if monster_hp <= 0:
-            reward_gold = monster["gold"]
-            cursor.execute("UPDATE players SET gold = gold + %s WHERE user_id = %s", (reward_gold, interaction.user.id))
-            conn.commit()
-            cursor.close()
-            conn.close()
-
-            embed = discord.Embed(
-                title="🎉 【戰鬥勝利！】",
-                description=f"你成功擊敗了 **{monster['name']}**！\n\n" + "\n".join(logs),
-                color=discord.Color.green()
-            )
-            embed.add_field(name="💰 獲得戰利品", value=f"**+{reward_gold} G**", inline=True)
-            await interaction.followup.send(embed=embed)
-            return
-
-        logs.append(f"💥 **{monster['name']}** 進行反擊，對你造成了 **{monster_dmg}** 點傷害！")
-        new_hp = max(0, player_hp - monster_dmg)
-
         reward_gold = monster["gold"]
-        cursor.execute("UPDATE players SET hp = %s, gold = gold + %s WHERE user_id = %s", (new_hp, reward_gold, interaction.user.id))
+
+        cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (reward_gold, interaction.user.id))
         conn.commit()
         cursor.close()
         conn.close()
 
-        embed = discord.Embed(
-            title=f"⚔️ 【遭遇戰：{monster['name']}】",
-            description="\n".join(logs),
-            color=discord.Color.orange()
-        )
-        embed.add_field(name="❤️ 你的剩餘血量", value=f"**{new_hp} HP**", inline=True)
+        embed = discord.Embed(title="🎉 【戰鬥勝利！】", color=discord.Color.green())
+        embed.description = f"你成功擊敗了 **{monster['name']}** 并造成了 **{player_dmg}** 點傷害！"
         embed.add_field(name="💰 獲得獎勵", value=f"**+{reward_gold} G**", inline=True)
-        
         await interaction.followup.send(embed=embed)
 
 async def setup(bot):

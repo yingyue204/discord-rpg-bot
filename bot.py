@@ -4,7 +4,6 @@ import os
 import asyncio
 from keep_alive import keep_alive
 from db import get_db_connection
-from cogs.roles import RoleSelectView  # 引入職業選單類別
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -13,36 +12,33 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 def init_global_db():
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS players (
-                user_id BIGINT PRIMARY KEY,
-                role TEXT,
-                hp INTEGER DEFAULT 100,
-                max_hp INTEGER DEFAULT 100,
-                atk INTEGER DEFAULT 25,
-                def INTEGER DEFAULT 10,
-                speed INTEGER DEFAULT 20,
-                gold INTEGER DEFAULT 100
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS inventory (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                item_name TEXT,
-                quantity INTEGER,
-                CONSTRAINT unique_user_item UNIQUE (user_id, item_name)
-            )
-        """)
-        conn.commit()
-        cursor.close()
-        conn.close()
-        print("✅ 雲端資料庫表格檢查與初始化完成！")
-    except Exception as e:
-        print(f"❌ 資料庫初始化失敗: {e}")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS players (
+            user_id INTEGER PRIMARY KEY,
+            role TEXT,
+            hp INTEGER DEFAULT 100,
+            max_hp INTEGER DEFAULT 100,
+            atk INTEGER DEFAULT 25,
+            def INTEGER DEFAULT 10,
+            speed INTEGER DEFAULT 20,
+            gold INTEGER DEFAULT 100
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS inventory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            item_name TEXT,
+            quantity INTEGER,
+            UNIQUE(user_id, item_name)
+        )
+    """)
+    conn.commit()
+    cursor.close()
+    conn.close()
+    print("✅ 本地 SQLite 資料庫表格初始化完成！")
 
 async def load_extensions():
     for filename in os.listdir("./cogs"):
@@ -53,10 +49,6 @@ async def load_extensions():
 @bot.event
 async def on_ready():
     init_global_db()
-    
-    # 註冊持久化選單，確保重啟後選單依然有效
-    bot.add_view(RoleSelectView())
-    
     try:
         synced = await bot.tree.sync()
         print(f"✅ 已成功同步 {len(synced)} 個斜線指令！")
