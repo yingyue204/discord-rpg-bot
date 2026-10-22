@@ -7,7 +7,6 @@ class RoleSelectView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    # 職業對應的初始數值設定
     ROLE_STATS = {
         "駭客": {"hp": 100, "atk": 25, "def": 10, "speed": 35},
         "磁暴重裝": {"hp": 180, "atk": 18, "def": 35, "speed": 15},
@@ -31,7 +30,7 @@ class RoleSelectView(discord.ui.View):
         conn = sqlite3.connect("rpg.db")
         cursor = conn.cursor()
 
-        # 確保玩家表格具備職業與屬性欄位
+        # 初始化玩家表格
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS players (
                 user_id INTEGER PRIMARY KEY,
@@ -45,21 +44,19 @@ class RoleSelectView(discord.ui.View):
             )
         """)
 
-        # 檢查玩家是否已經選擇過職業
+        # 檢查是否已選擇過職業
         cursor.execute("SELECT role FROM players WHERE user_id = ?", (interaction.user.id,))
         result = cursor.fetchone()
 
         if result and result[0]:
-            current_role = result[0]
             conn.close()
-            # 問題一解決方案：跳出已經綁定過的提醒提示
             await interaction.response.send_message(
-                f"⚠️ 你已經綁定過職業【**{current_role}**】了！無法重複選擇。",
+                f"⚠️ 你已經綁定過職業【**{result[0]}**】了！無法重複選擇。",
                 ephemeral=True
             )
             return
 
-        # 問題二解決方案：寫入玩家選擇的職業與對應數值
+        # 寫入或更新屬性數值
         cursor.execute("""
             INSERT INTO players (user_id, role, hp, max_hp, atk, def, speed, gold)
             VALUES (?, ?, ?, ?, ?, ?, ?, 100)
