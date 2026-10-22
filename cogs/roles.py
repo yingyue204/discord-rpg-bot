@@ -94,7 +94,7 @@ class Roles(commands.Cog):
         embed.add_field(name="異能覺醒", value="• 職業簡介：突破人體與科技極限的超自然異能者。\n• 初始屬性：❤️ 血量 110 | ⚔️ 攻擊 35 (最高) | 🛡️ 防禦 15 | ⚡ 速度 22 | 🌟 爆擊 5%", inline=False)
         embed.add_field(name="神射手", value="• 職業簡介：配備高倍率戰術鏡與高穿透電磁步槍的遠程專家。\n• 初始屬性：❤️ 血量 115 | ⚔️ 攻擊 30 | 🛡️ 防禦 10 | ⚡ 速度 26 | 🌟 爆擊 15%", inline=False)
         embed.set_footer(text="請使用 /選擇身分 指令來進行正式的職業身分綁定。")
-        await ctx.send(embed=embed, view=self.RoleSelectView())
+        await ctx.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(Roles(bot))
