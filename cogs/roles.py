@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import sqlite3
+from db import get_db_connection  # 引入雲端資料庫連線模組
 
 class RoleSelectView(discord.ui.View):
     def __init__(self):
@@ -27,12 +27,13 @@ class RoleSelectView(discord.ui.View):
         selected_role = select.values[0]
         stats = self.ROLE_STATS[selected_role]
 
-        conn = sqlite3.connect("rpg.db")
+        conn = get_db_connection()
         cursor = conn.cursor()
 
+        # 確保玩家表格存在 (PostgreSQL 語法)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS players (
-                user_id INTEGER PRIMARY KEY,
+                user_id BIGINT PRIMARY KEY,
                 role TEXT,
                 hp INTEGER,
                 max_hp INTEGER,
@@ -43,11 +44,12 @@ class RoleSelectView(discord.ui.View):
             )
         """)
 
-        # 檢查是否已選擇過職業
-        cursor.execute("SELECT role FROM players WHERE user_id = ?", (interaction.user.id,))
+        # 檢查是否已選擇過職業 (使用 %s 佔位符)
+        cursor.execute("SELECT role FROM players WHERE user_id = %s", (interaction.user.id,))
         result = cursor.fetchone()
 
         if result and result[0]:
+            cursor.close()
             conn.close()
             await interaction.response.send_message(
                 f"⚠️ 你已經綁定過職業【**{result[0]}**】了！無法重複選擇。",
@@ -55,20 +57,21 @@ class RoleSelectView(discord.ui.View):
             )
             return
 
-        # 1. 寫入資料庫
+        # 1. 寫入資料庫 (使用 %s 佔位符)
         cursor.execute("""
             INSERT INTO players (user_id, role, hp, max_hp, atk, def, speed, gold)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 100)
-            ON CONFLICT(user_id) DO UPDATE SET
-                role = excluded.role,
-                hp = excluded.hp,
-                max_hp = excluded.max_hp,
-                atk = excluded.atk,
-                def = excluded.def,
-                speed = excluded.speed
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 100)
+            ON CONFLICT (user_id) DO UPDATE SET
+                role = EXCLUDED.role,
+                hp = EXCLUDED.hp,
+                max_hp = EXCLUDED.max_hp,
+                atk = EXCLUDED.atk,
+                def = EXCLUDED.def,
+                speed = EXCLUDED.speed
         """, (interaction.user.id, selected_role, stats["hp"], stats["hp"], stats["atk"], stats["def"], stats["speed"]))
 
         conn.commit()
+        cursor.close()
         conn.close()
 
         # 2. 自動賦予 Discord 伺服器真實身分組
@@ -110,10 +113,10 @@ class Roles(commands.Cog):
             description="歡迎來到虛擬次元！以下為各大特務職業的詳細介紹與初始屬性配置：",
             color=discord.Color.dark_embed()
         )
-        embed.add_field(name="駭客", value="• 職業簡介：專精於系統超頻與軟體穿透的極速專家。\n• 初始屬性：❤️ 血量 100 | ⚔️ 攻擊 25 | 🛡️ 防禦 10 | ⚡ 速度 35", inline=False)
-        embed.add_field(name="磁暴重裝", value="• 職業簡介：配備重型外骨骼動力裝甲與電磁防禦盾。\n• 初始屬性：❤️ 血量 180 | ⚔️ 攻擊 18 | 🛡️ 防禦 35 | ⚡ 速度 15", inline=False)
-        embed.add_field(name="異能覺醒", value="• 職業簡介：突破人體與科技極限的超自然異能者。\n• 初始屬性：❤️ 血量 110 | ⚔️ 攻擊 35 (最高) | 🛡️ 防禦 15 | ⚡ 速度 20", inline=False)
-        embed.add_field(name="神射手", value="• 職業簡介：配備高倍率戰術鏡與高穿透電磁步槍的遠程專家。\n• 初始屬性：❤️ 血量 115 | ⚔️ 攻擊 30 | 🛡️ 防禦 16 | ⚡ 速度 25", inline=False)
+        embed.add_field(name="駭客", value="• 職業簡介：專精於系統超頻與軟體穿透的極速專家。\n初始屬性：❤️ 血量 100 | ⚔️ 攻擊 25 | 🛡️ 防禦 10 | ⚡ 速度 35", inline=False)
+        embed.add_field(name="磁暴重裝", value="• 職業簡介：配備重型外骨骼動力裝甲與電磁防禦盾。\n初始屬性：❤️ 血量 180 | ⚔️ 攻擊 18 | 🛡️ 防禦 35 | ⚡ 速度 15", inline=False)
+        embed.add_field(name="異能覺醒", value="• 職業簡介：突破人體與科技極限的超自然異能者。\n初始屬性：❤️ 血量 110 | ⚔️ 攻擊 35 (最高) | 🛡️ 防禦 15 | ⚡ 速度 20", inline=False)
+        embed.add_field(name="神射手", value="• 職業簡介：配備高倍率戰術鏡與高穿透電磁步槍的遠程專家。\n初始屬性：❤️ 血量 115 | ⚔️ 攻擊 30 | 🛡️ 防禦 16 | ⚡ 速度 25", inline=False)
         embed.set_footer(text="請使用 /選擇身份 指令或點選下方選單來進行正式的職業身份綁定。")
 
         view = RoleSelectView()

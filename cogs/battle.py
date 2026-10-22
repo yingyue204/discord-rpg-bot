@@ -1,8 +1,8 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import sqlite3
 import random
+from db import get_db_connection  # 引入雲端資料庫連線模組
 
 class Battle(commands.Cog):
     def __init__(self, bot):
@@ -10,13 +10,13 @@ class Battle(commands.Cog):
 
     @app_commands.command(name="打怪", description="前往野外遭遇怪物並展開戰鬥！")
     async def battle(self, interaction: discord.Interaction):
-        conn = sqlite3.connect("rpg.db")
+        conn = get_db_connection()
         cursor = conn.cursor()
 
-        # 確保玩家表格存在並讀取屬性
+        # 確保玩家表格存在並讀取屬性 (PostgreSQL 語法)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS players (
-                user_id INTEGER PRIMARY KEY,
+                user_id BIGINT PRIMARY KEY,
                 role TEXT,
                 hp INTEGER DEFAULT 100,
                 max_hp INTEGER DEFAULT 100,
@@ -26,11 +26,14 @@ class Battle(commands.Cog):
                 gold INTEGER DEFAULT 100
             )
         """)
+        conn.commit()
 
-        cursor.execute("SELECT role, hp, atk, def, gold FROM players WHERE user_id = ?", (interaction.user.id,))
+        # 查詢玩家資料 (使用 %s 佔位符)
+        cursor.execute("SELECT role, hp, atk, def, gold FROM players WHERE user_id = %s", (interaction.user.id,))
         player = cursor.fetchone()
 
         if not player or not player[0]:
+            cursor.close()
             conn.close()
             await interaction.response.send_message("⚠️ 你尚未選擇職業！請先使用 `/選擇身份` 或在頻道點選職業選單。", ephemeral=True)
             return
@@ -47,9 +50,7 @@ class Battle(commands.Cog):
         monster_hp = monster["hp"]
 
         # 簡單回合戰鬥計算
-        # 玩家造成的傷害 = 玩家攻擊力 - 怪物簡化防禦 (最少 1)
         player_dmg = max(1, player_atk - 2)
-        # 怪物造成的傷害 = 怪物攻擊力 - 玩家防禦力 (最少 1)
         monster_dmg = max(1, monster["atk"] - player_def)
 
         # 戰鬥過程簡述
@@ -59,8 +60,9 @@ class Battle(commands.Cog):
 
         if monster_hp <= 0:
             reward_gold = monster["gold"]
-            cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (reward_gold, interaction.user.id))
+            cursor.execute("UPDATE players SET gold = gold + %s WHERE user_id = %s", (reward_gold, interaction.user.id))
             conn.commit()
+            cursor.close()
             conn.close()
 
             embed = discord.Embed(
@@ -75,13 +77,11 @@ class Battle(commands.Cog):
         logs.append(f"💥 **{monster['name']}** 進行反擊，對你造成了 **{monster_dmg}** 點傷害！")
         new_hp = max(0, player_hp - monster_dmg)
 
-        # 更新玩家剩餘血量
-        cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, interaction.user.id))
-        
-        # 玩家勝利（進行第二回合判定）
+        # 更新玩家剩餘血量並發放獎勵 (使用 %s 佔位符)
         reward_gold = monster["gold"]
-        cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (reward_gold, interaction.user.id))
+        cursor.execute("UPDATE players SET hp = %s, gold = gold + %s WHERE user_id = %s", (new_hp, reward_gold, interaction.user.id))
         conn.commit()
+        cursor.close()
         conn.close()
 
         embed = discord.Embed(
