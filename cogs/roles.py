@@ -24,71 +24,93 @@ class RoleSelectView(discord.ui.View):
         ]
     )
     async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
-        print("DEBUG: 收到選單點擊事件，準備 defer...")
-        await interaction.response.defer(ephemeral=True)
-        print("DEBUG: defer 成功")
+        try:
+            print("DEBUG roles.py: 收到選單點擊事件")
+            await interaction.response.defer(ephemeral=True)
+            
+            selected_role = select.values[0]
+            stats = self.ROLE_STATS[selected_role]
 
-        selected_role = select.values[0]
-        stats = self.ROLE_STATS[selected_role]
+            print("DEBUG roles.py: 嘗試連線資料庫...")
+            conn = get_db_connection()
+            cursor = conn.cursor()
 
-        print("DEBUG: 準備連線資料庫...")
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        print("DEBUG: 資料庫連線成功")
+            # 確保玩家表格存在
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS players (
+                    user_id BIGINT PRIMARY KEY,
+                    role TEXT,
+                    hp INTEGER,
+                    max_hp INTEGER,
+                    atk INTEGER,
+                    def INTEGER,
+                    speed INTEGER,
+                    gold INTEGER DEFAULT 100
+                )
+            """)
 
-        cursor.execute("SELECT role FROM players WHERE user_id = %s", (interaction.user.id,))
-        result = cursor.fetchone()
+            # 檢查是否已選擇過職業
+            cursor.execute("SELECT role FROM players WHERE user_id = %s", (interaction.user.id,))
+            result = cursor.fetchone()
 
-        if result and result[0]:
-            print(f"DEBUG: 玩家已經選擇過職業: {result[0]}")
+            if result and result[0]:
+                cursor.close()
+                conn.close()
+                print(f"DEBUG roles.py: 玩家已經選擇過職業: {result[0]}")
+                await interaction.followup.send(
+                    f"⚠️ 你已經綁定過職業【**{result[0]}**】了！無法重複選擇。",
+                    ephemeral=True
+                )
+                return
+
+            print("DEBUG roles.py: 準備寫入資料庫...")
+            cursor.execute("""
+                INSERT INTO players (user_id, role, hp, max_hp, atk, def, speed, gold)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 100)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    role = EXCLUDED.role,
+                    hp = EXCLUDED.hp,
+                    max_hp = EXCLUDED.max_hp,
+                    atk = EXCLUDED.atk,
+                    def = EXCLUDED.def,
+                    speed = EXCLUDED.speed
+            """, (interaction.user.id, selected_role, stats["hp"], stats["hp"], stats["atk"], stats["def"], stats["speed"]))
+
+            conn.commit()
             cursor.close()
             conn.close()
+            print("DEBUG roles.py: 資料庫寫入並關閉完成")
+
+            # 自動賦予 Discord 伺服器真實身分組
+            guild = interaction.guild
+            member = interaction.user
+            role_msg = ""
+            if guild:
+                role_to_give = discord.utils.get(guild.roles, name=selected_role)
+                if role_to_give:
+                    try:
+                        await member.add_roles(role_to_give)
+                        role_msg = f"\n✨ 已成功為你掛載 Discord 身分組：【{selected_role}】"
+                    except Exception as e:
+                        role_msg = f"\n⚠️ 身分組賦予失敗（請確認機器人權限是否高於該身分組）：{e}"
+                else:
+                    role_msg = f"\n⚠️ 伺服器中找不到名為「{selected_role}」的身分組！"
+
+            print("DEBUG roles.py: 準備發送 followup 回應...")
             await interaction.followup.send(
-                f"⚠️ 你已經綁定過職業【**{result[0]}**】了！無法重複選擇。",
+                f"🎉 成功選擇職業【**{selected_role}**】！\n"
+                f"❤️ 血量: {stats['hp']} | ⚔️ 攻擊力: {stats['atk']} | 🛡️ 防禦力: {stats['def']} | ⚡ 速度: {stats['speed']}"
+                f"{role_msg}",
                 ephemeral=True
             )
-            return
+            print("DEBUG roles.py: 回應發送完成")
 
-        print("DEBUG: 準備寫入資料庫...")
-        cursor.execute("""
-            INSERT INTO players (user_id, role, hp, max_hp, atk, def, speed, gold)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, 100)
-            ON CONFLICT (user_id) DO UPDATE SET
-                role = EXCLUDED.role,
-                hp = EXCLUDED.hp,
-                max_hp = EXCLUDED.max_hp,
-                atk = EXCLUDED.atk,
-                def = EXCLUDED.def,
-                speed = EXCLUDED.speed
-        """, (interaction.user.id, selected_role, stats["hp"], stats["hp"], stats["atk"], stats["def"], stats["speed"]))
-
-        conn.commit()
-        cursor.close()
-        conn.close()
-        print("DEBUG: 資料庫寫入並關閉完成")
-
-        guild = interaction.guild
-        member = interaction.user
-        role_to_give = discord.utils.get(guild.roles, name=selected_role)
-
-        role_msg = ""
-        if role_to_give:
+        except Exception as e:
+            print(f"❌ 錯誤發生於 select_callback: {e}")
             try:
-                await member.add_roles(role_to_give)
-                role_msg = f"\n✨ 已成功為你掛載 Discord 身分組：【{selected_role}】"
-            except Exception as e:
-                role_msg = f"\n⚠️ 身分組賦予失敗（請確認機器人權限是否高於該身分組）：{e}"
-        else:
-            role_msg = f"\n⚠️ 伺服器中找不到名為「{selected_role}」的身分組，請管理員建立對應身分組！"
-
-        print("DEBUG: 準備發送 followup 回應...")
-        await interaction.followup.send(
-            f"🎉 成功選擇職業【**{selected_role}**】！\n"
-            f"❤️ 血量: {stats['hp']} | ⚔️ 攻擊力: {stats['atk']} | 🛡️ 防禦力: {stats['def']} | ⚡ 速度: {stats['speed']}"
-            f"{role_msg}",
-            ephemeral=True
-        )
-        print("DEBUG: 回應發送完成")
+                await interaction.followup.send(f"❌ 系統發生預期外的錯誤：{e}", ephemeral=True)
+            except:
+                pass
 
 class Roles(commands.Cog):
     def __init__(self, bot):
