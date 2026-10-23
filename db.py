@@ -5,7 +5,7 @@ def get_db_connection():
     return sqlite3.connect("database.db")
 
 def use_item_in_db(user_id: int, item_name: str):
-    conn = get_db_connection()  # 統一使用共用連線
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # 1. 檢查玩家是否擁有該道具且數量大於 0
@@ -36,3 +36,26 @@ def use_item_in_db(user_id: int, item_name: str):
     conn.commit()
     conn.close()
     return True, effect_msg
+
+def take_damage(user_id: int, damage: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 1. 取得目前血量
+    cursor.execute("SELECT hp FROM players WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    
+    if not result:
+        conn.close()
+        return None, "找不到你的角色資料！"
+        
+    current_hp = result[0]
+    new_hp = max(0, current_hp - damage)
+    
+    # 2. 更新血量
+    cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, user_id))
+    conn.commit()
+    conn.close()
+    
+    is_fainted = (new_hp == 0)
+    return new_hp, is_fainted
