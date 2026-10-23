@@ -31,16 +31,29 @@ class Admin(commands.Cog):
                 except discord.Forbidden:
                     pass
 
-        # 3. 清除「機器人」在當前頻道近期發送的訊息（最多檢查最近 100 則）
+        # 3. 清除當前頻道中由機器人發送的歷史訊息
         deleted_msgs_count = 0
         try:
+            # 優先使用 bulk 快速批量刪除
             deleted = await interaction.channel.purge(
                 limit=100, 
-                check=lambda m: m.author == interaction.client.user
+                check=lambda m: m.author == interaction.client.user,
+                bulk=True
             )
             deleted_msgs_count = len(deleted)
+        except discord.HTTPException:
+            # 若包含超過 14 天的舊訊息，降級改用逐筆刪除 (bulk=False)
+            try:
+                deleted = await interaction.channel.purge(
+                    limit=100, 
+                    check=lambda m: m.author == interaction.client.user,
+                    bulk=False
+                )
+                deleted_msgs_count = len(deleted)
+            except Exception:
+                pass
         except discord.Forbidden:
-            pass  # 如果機器人沒有「管理訊息」權限則略過
+            pass
 
         await interaction.followup.send(
             f"✅ 成功重置玩家 **{member.display_name}** 的資料！\n"
