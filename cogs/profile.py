@@ -15,7 +15,7 @@ class Status(commands.Cog):
         cursor = conn.cursor()
         
         # 查詢玩家資料（只讀取 hp, max_hp, atk, def, gold，不再包含 spd/速度）
-        cursor.execute("SELECT role, hp, max_hp, atk, def, gold FROM players WHERE user_id = ?", (interaction.user.id,))
+        cursor.execute("SELECT role, hp, max_hp, atk, def, mp, gold FROM players WHERE user_id = ?", (interaction.user.id,))
         player = cursor.fetchone()
 
         if not player or not player[0]:
@@ -24,7 +24,7 @@ class Status(commands.Cog):
             await interaction.followup.send("⚠️ 你尚未選擇身份！請先使用 `/setup_roles` 面板選擇職業。", ephemeral=True)
             return
 
-        role_name, hp, max_hp, atk, player_def, gold = player
+        role_name, hp, max_hp, atk, player_def, mp, gold = player
         cursor.close()
         conn.close()
 
@@ -37,6 +37,7 @@ class Status(commands.Cog):
         embed.add_field(name="❤️ 生命值", value=f"{hp}/{max_hp}", inline=True)
         embed.add_field(name="⚔️ 攻擊力", value=f"{atk}", inline=True)
         embed.add_field(name="🛡️ 防禦力", value=f"{player_def}", inline=True)
+        embed.add_field(name="💧 魔力值", value=f"{mp}", inline=True)
         embed.add_field(name="💰 金幣", value=f"{gold} G", inline=True)
 
         await interaction.followup.send(embed=embed, ephemeral=True)
