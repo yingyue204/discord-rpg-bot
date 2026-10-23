@@ -61,7 +61,7 @@ class ClassSelect(discord.ui.Select):
         role_info = CLASSES_DATA[selected_role]
         cursor.execute("""
             INSERT INTO players (user_id, role, hp, max_hp, mp, atk, def, gold)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 50)
             ON CONFLICT(user_id) DO UPDATE SET
                 role = excluded.role,
                 hp = excluded.hp,
