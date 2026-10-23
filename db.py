@@ -1,4 +1,5 @@
 import sqlite3
+import random
 
 def get_db_connection():
     return sqlite3.connect("database.db")
@@ -15,7 +16,7 @@ def init_db():
         )
     """)
     
-    # 2. 自動檢查並補齊 players 表格可能缺少的欄位（防止舊資料庫報錯）
+    # 2. 自動檢查並補齊 players 表格欄位（包含穿戴中的裝備）
     columns_to_add = {
         "role": "TEXT",
         "hp": "INTEGER DEFAULT 100",
@@ -23,7 +24,11 @@ def init_db():
         "mp": "INTEGER DEFAULT 50",
         "atk": "INTEGER DEFAULT 10",
         "def": "INTEGER DEFAULT 5",
-        "gold": "INTEGER DEFAULT 0"
+        "gold": "INTEGER DEFAULT 0",
+        "weapon_name": "TEXT DEFAULT '無'",
+        "weapon_atk": "INTEGER DEFAULT 0",
+        "armor_name": "TEXT DEFAULT '無'",
+        "armor_def": "INTEGER DEFAULT 0"
     }
     
     cursor.execute("PRAGMA table_info(players)")
@@ -49,6 +54,87 @@ def init_db():
 # 啟動時執行初始化
 init_db()
 
+# 開啟寶箱邏輯
+def open_chest_in_db(user_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # 檢查背包是否有寶箱
+    cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = '神秘寶箱'", (user_id,))
+    item = cursor.fetchone()
+
+    if not item or item[0] <= 0:
+        cursor.close()
+        conn.close()
+        return False, "你的背包裡沒有 **神秘寶箱**！"
+
+    # 扣除 1 個寶箱
+    if item[0] > 1:
+        cursor.execute("UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_name = '神秘寶箱'", (user_id,))
+    else:
+        cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = '神秘寶箱'", (user_id,))
+
+    # 抽籤品質機率：普通 60% | 稀有 25% | 史詩 12% | 傳說 3%
+    quality_roll = random.random()
+    if quality_roll < 0.60:
+        quality, prefix, multiplier = "⚪ 普通", "普通", 1.0
+    elif quality_roll < 0.85:
+        quality, prefix, multiplier = "🔵 稀有", "精良", 1.8
+    elif quality_roll < 0.97:
+        quality, prefix, multiplier = "🟣 史詩", "史詩", 2.8
+    else:
+        quality, prefix, multiplier = "🟡 傳說", "傳說級", 4.5
+
+    # 隨機決定開出武器還是防具
+    is_weapon = random.choice([True, False])
+
+    if is_weapon:
+        weapon_base = random.choice(["光束劍", "高振動短刀", "電磁打擊槍", "重型巨斧"])
+        item_name = f"【{prefix}】{weapon_base}"
+        bonus_atk = int(random.randint(5, 12) * multiplier)
+
+        # 寫入背包
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        existing = cursor.fetchone()
+        if existing:
+            cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        else:
+            cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, item_name))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        msg = (
+            f"🎉 成功開啟 **神秘寶箱**！\n"
+            f"獲得武器：**{item_name}**（品質：{quality}）\n"
+            f"⚔️ **攻擊力加成**：`+{bonus_atk}`"
+        )
+        return True, msg, item_name, "weapon", bonus_atk, quality
+    else:
+        armor_base = random.choice(["戰術護甲", "納米防護服", "合金重盾", "外骨骼裝甲"])
+        item_name = f"【{prefix}】{armor_base}"
+        bonus_def = int(random.randint(3, 8) * multiplier)
+
+        # 寫入背包
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        existing = cursor.fetchone()
+        if existing:
+            cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        else:
+            cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, item_name))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        msg = (
+            f"🎉 成功開啟 **神秘寶箱**！\n"
+            f"獲得防具：**{item_name}**（品質：{quality}）\n"
+            f"🛡️ **防禦力加成**：`+{bonus_def}`"
+        )
+        return True, msg, item_name, "armor", bonus_def, quality
+
 def use_item_in_db(user_id: int, item_name: str):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -56,12 +142,6 @@ def use_item_in_db(user_id: int, item_name: str):
     cursor.execute("INSERT OR IGNORE INTO players (user_id, hp, max_hp, mp) VALUES (?, 100, 100, 50)", (user_id,))
     conn.commit()
     
-    # 取得當前血量與血量上限
-    cursor.execute("SELECT hp, max_hp FROM players WHERE user_id = ?", (user_id,))
-    player = cursor.fetchone()
-    current_hp = player[0] if player and player[0] is not None else 100
-    max_hp = player[1] if player and player[1] is not None else 100
-
     # 檢查背包道具數量
     cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
     item = cursor.fetchone()
@@ -71,6 +151,11 @@ def use_item_in_db(user_id: int, item_name: str):
         conn.close()
         return False, "你背包裡沒有這個道具！"
     
+    # 取當前血量
+    cursor.execute("SELECT hp, max_hp FROM players WHERE user_id = ?", (user_id,))
+    player = cursor.fetchone()
+    current_hp, max_hp = player[0], player[1]
+
     # 判斷道具效果
     if item_name in ["生命藥水", "急救包"]:
         if current_hp >= max_hp:
@@ -91,15 +176,14 @@ def use_item_in_db(user_id: int, item_name: str):
     else:
         cursor.close()
         conn.close()
-        return False, f"**{item_name}** 無法直接使用！"
+        return False, f"**{item_name}** 無法直接使用！請確認是否為可消耗道具。"
 
     # 扣減或刪除背包道具數量
     new_qty = item[0] - 1
     if new_qty > 0:
         cursor.execute("UPDATE inventory SET quantity = ? WHERE user_id = ? AND item_name = ?", (new_qty, user_id, item_name))
     else:
-        # 修正：刪除時只需要 user_id 和 item_name 兩個參數
-        cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ?", (new_qty, user_id, item_name))
         
     conn.commit()
     cursor.close()
@@ -109,13 +193,11 @@ def use_item_in_db(user_id: int, item_name: str):
 def take_damage(user_id: int, damage: int):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
     cursor.execute("INSERT OR IGNORE INTO players (user_id, hp, max_hp, mp) VALUES (?, 100, 100, 50)", (user_id,))
     conn.commit()
     
     cursor.execute("SELECT hp FROM players WHERE user_id = ?", (user_id,))
     result = cursor.fetchone()
-    
     current_hp = result[0] if result and result[0] is not None else 100
     new_hp = max(0, current_hp - damage)
     
@@ -123,18 +205,13 @@ def take_damage(user_id: int, damage: int):
     conn.commit()
     cursor.close()
     conn.close()
-    
-    is_fainted = (new_hp == 0)
-    return new_hp, is_fainted
-    
-# 清除指定玩家的所有遊戲記錄與背包
+    return new_hp, (new_hp == 0)
+
 def reset_player_data(user_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
     cursor.execute("DELETE FROM players WHERE user_id = ?", (user_id,))
     cursor.execute("DELETE FROM inventory WHERE user_id = ?", (user_id,))
-    
     conn.commit()
     cursor.close()
     conn.close()

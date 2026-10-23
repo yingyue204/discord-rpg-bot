@@ -25,21 +25,16 @@ class Adventure(commands.Cog):
 
         role_name, hp, max_hp, gold = player
 
-        # 🏥 檢查是否處於倒地狀態 (hp <= 0)
+        # 🏥 檢查倒地狀態
         if hp <= 0:
-            # 診所治療：從當前血量 (0) 恢復 50 點，但上限不超過 max_hp
             new_hp = min(max_hp, hp + 50)
             actual_healed = new_hp - hp
-
             cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, interaction.user.id))
             conn.commit()
             cursor.close()
             conn.close()
 
-            embed = discord.Embed(
-                title="🏥 【新手村診所】",
-                color=discord.Color.blue()
-            )
+            embed = discord.Embed(title="🏥 【新手村診所】", color=discord.Color.blue())
             embed.description = (
                 f"你目前處於 **倒地狀態**，無法進行危險的冒險！\n"
                 f"路過的熱心特務把你緊急抬進了新手村診所進行急救治療... 🩺\n\n"
@@ -49,11 +44,16 @@ class Adventure(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
-        # 🎒 血量正常，執行原本的冒險搜刮邏輯
+        # 🎒 搜刮邏輯
         found_gold = random.randint(5, 20)
-        found_item = random.choice(["生命藥水", "急救包", "鐵劍碎片"])
         
-        # 檢查背包是否已有該道具
+        # 15% 機率獲得寶箱，85% 獲得普通物資
+        got_chest = random.random() < 0.15
+        if got_chest:
+            found_item = "神秘寶箱"
+        else:
+            found_item = random.choice(["生命藥水", "急救包", "鐵劍碎片"])
+        
         cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (interaction.user.id, found_item))
         item_row = cursor.fetchone()
         
@@ -62,15 +62,17 @@ class Adventure(commands.Cog):
         else:
             cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (interaction.user.id, found_item))
 
-        # 增加金幣
-        cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (interaction.user.id, found_gold))
+        cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (found_gold, interaction.user.id))
         conn.commit()
         cursor.close()
         conn.close()
 
-        # 回傳冒險成功結果
         embed = discord.Embed(title="🛡️ 【冒險搜刮成功】", color=discord.Color.green())
-        embed.add_field(name="📦 獲得道具", value=f"**{found_item}** x `1`", inline=True)
+        if got_chest:
+            embed.add_field(name="🎁 幸運發現", value="**✨ 神秘寶箱 x 1**", inline=True)
+        else:
+            embed.add_field(name="📦 獲得道具", value=f"**{found_item}** x `1`", inline=True)
+            
         embed.add_field(name="💰 獲得金幣", value=f"**+{found_gold} G**", inline=True)
         await interaction.followup.send(embed=embed)
 
