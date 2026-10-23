@@ -184,7 +184,7 @@ class Battle(commands.Cog):
             color=discord.Color.orange()
         )
         embed.add_field(name="🤖 怪物名稱", value=f"**{monster_name}**", inline=True)
-        embed.add_field(name="❤️ 怪物血量", value=`{monster_hp}` HP", inline=True)
+        embed.add_field(name="❤️ 怪物血量", value=f"`{monster_hp}` HP", inline=True)
         embed.add_field(name="⚔️ 預估攻擊力", value=f"`{monster_atk}` ATK", inline=True)
         embed.set_footer(text=f"💡 戰鬥將消耗 {MP_COST_PER_BATTLE} MP，選擇逃跑則不消耗 MP。")
 

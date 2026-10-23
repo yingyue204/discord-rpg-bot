@@ -32,7 +32,7 @@ class ClassSelect(discord.ui.Select):
         options = [
             discord.SelectOption(
                 label=role_name,
-                description=f"HP:{data['hp']} | ATK:{data['atk']} | DEF:{data['def']}",
+                description=f"HP:{data['hp']} | MP:{data['mp']} | ATK:{data['atk']} | DEF:{data['def']}",
                 emoji=data["emoji"]
             )
             for role_name, data in CLASSES_DATA.items()
@@ -57,31 +57,37 @@ class ClassSelect(discord.ui.Select):
             await interaction.followup.send(f"⚠️ 你已經綁定職業 **【{player[0]}】**，無法重複選擇或更換！", ephemeral=True)
             return
 
-        # 2. 寫入/更新玩家職業與基礎數值
+        # 2. 寫入/更新玩家職業與基礎數值（同時帶入 mp 與 max_mp）
         role_info = CLASSES_DATA[selected_role]
         cursor.execute("""
-            INSERT INTO players (user_id, role, hp, max_hp, mp, atk, def, gold)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 50)
+            INSERT INTO players (user_id, role, hp, max_hp, mp, max_mp, atk, def, gold)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
             ON CONFLICT(user_id) DO UPDATE SET
                 role = excluded.role,
                 hp = excluded.hp,
                 max_hp = excluded.max_hp,
                 mp = excluded.mp,
+                max_mp = excluded.max_mp,
                 atk = excluded.atk,
                 def = excluded.def
-        """, (user_id, selected_role, role_info["hp"], role_info["max_hp"], role_info["mp"], role_info["atk"], role_info["def"]))
+        """, (
+            user_id, selected_role, 
+            role_info["hp"], role_info["max_hp"], 
+            role_info["mp"], role_info["mp"],  # 將 mp 與 max_mp 同步設定為職業初始值
+            role_info["atk"], role_info["def"]
+        ))
 
         conn.commit()
         cursor.close()
         conn.close()
 
-        # 3. 給予 Discord 身份組（若伺服器有設定對應名稱的身份組）
+        # 3. 給予 Discord 身份組
         role_obj = discord.utils.get(interaction.guild.roles, name=selected_role)
         if role_obj:
             try:
                 await interaction.user.add_roles(role_obj)
             except discord.Forbidden:
-                pass  # 機器人權限不足時略過身份組賦予
+                pass
 
         embed = discord.Embed(
             title="🎉 【職業選擇成功】",
@@ -89,15 +95,15 @@ class ClassSelect(discord.ui.Select):
             color=discord.Color.green()
         )
         embed.add_field(name="❤️ 生命值", value=f"`{role_info['hp']}/{role_info['max_hp']}`", inline=True)
-        embed.add_field(name="💧 魔力值", value=f"`{role_info['mp']}`", inline=True)
+        embed.add_field(name="💧 魔力值", value=f"`{role_info['mp']}/{role_info['mp']}`", inline=True)
         embed.add_field(name="⚔️ 攻擊力", value=f"`{role_info['atk']}`", inline=True)
         embed.add_field(name="🛡️ 防禦力", value=f"`{role_info['def']}`", inline=True)
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 class ClassSelectView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None) # 持久化選單，重啟後不失效
+    def __init__(self, bot=None):
+        super().__init__(timeout=None)
         self.add_item(ClassSelect())
 
 class Roles(commands.Cog):
@@ -121,7 +127,6 @@ class Roles(commands.Cog):
                 inline=False
             )
 
-        # 發送至頻道，並附帶下拉選單
         await interaction.response.send_message(embed=embed, view=ClassSelectView())
 
     @setup_roles.error
