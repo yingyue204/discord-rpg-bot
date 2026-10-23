@@ -1,17 +1,16 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from db import get_db_connection
-from db import use_item_in_db  # 引入剛剛寫好的資料庫函式
+from db import get_db_connection, use_item_in_db
 
-class BagCog(commands.Cog):
+class Bag(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    # 1. 使用道具指令
     @app_commands.command(name="use", description="使用背包中的道具")
     @app_commands.describe(item_name="你想使用的道具名稱")
     async def use_item(self, interaction: discord.Interaction, item_name: str):
-        # 呼叫資料庫處理邏輯
         success, message = use_item_in_db(interaction.user.id, item_name)
         
         if success:
@@ -29,13 +28,7 @@ class BagCog(commands.Cog):
             
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-async def setup(bot):
-    await bot.add_cog(BagCog(bot))
-
-class Bag(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-
+    # 2. 查看背包指令
     @app_commands.command(name="bag", description="查看隨身背包道具")
     async def bag(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
