@@ -61,6 +61,16 @@ async def on_ready():
         print(f"⚠️ 指令同步失敗: {e}")
     print(f"✅ 機器人已成功線上登入：{bot.user}")
 
+@bot.event
+async def on_ready():
+    # 同步所有斜線指令到 Discord
+    try:
+        synced = await bot.tree.sync()
+        print(f"✅ 已成功同步 {len(synced)} 個斜線指令！")
+    except Exception as e:
+        print(e)
+    print(f"✅ 機器人已成功線上登入：{bot.user}")
+
 async def main():
     keep_alive()  # 啟動 Web Server
     async with bot:
