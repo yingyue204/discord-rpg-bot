@@ -28,7 +28,6 @@ class Profile(commands.Cog):
         embed.add_field(name="❤️ 生命值", value=f"{hp}/{max_hp}", inline=True)
         embed.add_field(name="⚔️ 攻擊力", value=f"{atk}", inline=True)
         embed.add_field(name="🛡️ 防禦力", value=f"{def_val}", inline=True)
-        embed.add_field(name="⚡ 速度", value=f"{speed}", inline=True)
         embed.add_field(name="💰 金幣", value=f"{gold} G", inline=True)
 
         await interaction.followup.send(embed=embed, ephemeral=True)
