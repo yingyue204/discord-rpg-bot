@@ -52,45 +52,44 @@ class Shop(commands.Cog):
 
         conn = get_db_connection()
         cursor = conn.cursor()
+        try:
+            # 檢查玩家金幣
+            cursor.execute("INSERT OR IGNORE INTO players (user_id, gold) VALUES (?, 0)", (interaction.user.id,))
+            conn.commit()
 
-        # 檢查玩家金幣
-        cursor.execute("INSERT OR IGNORE INTO players (user_id, gold) VALUES (?, 0)", (interaction.user.id,))
-        conn.commit()
+            cursor.execute("SELECT gold FROM players WHERE user_id = ?", (interaction.user.id,))
+            player_gold = cursor.fetchone()[0]
 
-        cursor.execute("SELECT gold FROM players WHERE user_id = ?", (interaction.user.id,))
-        player_gold = cursor.fetchone()[0]
+            if player_gold < total_cost:
+                await interaction.followup.send(
+                    f"❌ 你的金幣不足！購買 `{quantity}` 個 **{item_name}** 需要 `{total_cost} G`，但你身上只有 `{player_gold} G`。",
+                    ephemeral=True
+                )
+                return
 
-        if player_gold < total_cost:
+            # 扣除金幣
+            cursor.execute("UPDATE players SET gold = gold - ? WHERE user_id = ?", (total_cost, interaction.user.id))
+
+            # 新增道具到背包
+            cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (interaction.user.id, item_name))
+            item_row = cursor.fetchone()
+
+            if item_row:
+                cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (quantity, interaction.user.id, item_name))
+            else:
+                cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (interaction.user.id, item_name, quantity))
+
+            conn.commit()
+
+            embed = discord.Embed(
+                title="🛍️ 【購買成功】",
+                description=f"成功購買了 **{item_name}** x `{quantity}`！\n總共花費：`{total_cost} G`",
+                color=discord.Color.green()
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        finally:
             cursor.close()
             conn.close()
-            await interaction.followup.send(
-                f"❌ 你的金幣不足！購買 `{quantity}` 個 **{item_name}** 需要 `{total_cost} G`，但你身上只有 `{player_gold} G`。",
-                ephemeral=True
-            )
-            return
-
-        # 扣除金幣
-        cursor.execute("UPDATE players SET gold = gold - ? WHERE user_id = ?", (total_cost, interaction.user.id))
-
-        # 新增道具到背包
-        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (interaction.user.id, item_name))
-        item_row = cursor.fetchone()
-
-        if item_row:
-            cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (quantity, interaction.user.id, item_name))
-        else:
-            cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (interaction.user.id, item_name, quantity))
-
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        embed = discord.Embed(
-            title="🛍️ 【購買成功】",
-            description=f"成功購買了 **{item_name}** x `{quantity}`！\n總共花費：`{total_cost} G`",
-            color=discord.Color.green()
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Shop(bot))

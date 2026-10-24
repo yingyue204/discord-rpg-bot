@@ -4,8 +4,6 @@ from discord.ext import commands
 from discord import app_commands
 from db import get_db_connection, update_and_get_mp, consume_mp
 
-MP_COST_PER_BATTLE = 10  # 每次打怪消耗 10 點 MP
-
 class BattleChoiceView(discord.ui.View):
     def __init__(self, user_id, monster_name, monster_hp, monster_atk, is_adventure_ambush=False):
         super().__init__(timeout=60)
@@ -14,192 +12,206 @@ class BattleChoiceView(discord.ui.View):
         self.monster_hp = monster_hp
         self.monster_atk = monster_atk
         self.is_adventure_ambush = is_adventure_ambush
-        self.message = None  # 用來儲存該則訊息物件，供超時後編輯
+        self.message = None
 
     async def on_timeout(self):
-        """⏳ 當 60 秒超時且玩家未點擊時自動觸發"""
+        # 60 秒未操作自動失效按鈕
         if self.message:
+            for child in self.children:
+                child.disabled = True
             try:
-                # 將所有按鈕設為禁用狀態 (disabled=True)
-                for child in self.children:
-                    child.disabled = True
-                
-                expired_embed = discord.Embed(
-                    title="⏰ 【遭遇戰已過期】",
-                    description=f"你猶豫太久了，**{self.monster_name}** 趁你分心時悄悄離開了現場...",
-                    color=discord.Color.dark_gray()
-                )
-                await self.message.edit(embed=expired_embed, view=self)
+                embed = self.message.embeds[0]
+                embed.color = discord.Color.dark_gray()
+                embed.set_footer(text="⌛ 戰鬥逾時未操作，已自動中斷。")
+                await self.message.edit(embed=embed, view=self)
             except Exception:
-                pass  # 避免訊息已被刪除或互動失效時報錯
+                pass
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("❌ 這不是你的戰鬥遭遇！", ephemeral=True)
-            return False
-        return True
-
-    @discord.ui.button(label="發動攻擊", style=discord.ButtonStyle.danger, emoji="⚔️")
+    @discord.ui.button(label="⚔️ 普通攻擊", style=discord.ButtonStyle.primary)
     async def attack_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("⚠️ 這不是你的戰鬥！", ephemeral=True)
+            return
+        await self.process_turn(interaction, action="attack")
+
+    @discord.ui.button(label="⚡ 技能攻擊 (耗 15 MP)", style=discord.ButtonStyle.success)
+    async def skill_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("⚠️ 這不是你的戰鬥！", ephemeral=True)
+            return
+        
+        # 檢查當前 MP 是否足夠
+        mp, max_mp = update_and_get_mp(self.user_id)
+        if mp < 15:
+            await interaction.response.send_message("❌ 你的魔力 (MP) 不足 15 點，無法施放技能！", ephemeral=True)
+            return
+        
+        consume_mp(self.user_id, 15)
+        await self.process_turn(interaction, action="skill")
+
+    @discord.ui.button(label="🏃 逃跑", style=discord.ButtonStyle.danger)
+    async def flee_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("⚠️ 這不是你的戰鬥！", ephemeral=True)
+            return
+        
+        for child in self.children:
+            child.disabled = True
+        
+        embed = discord.Embed(
+            title="🏃 【戰鬥逃跑】",
+            description=f"你迅速撤退，成功從 **{self.monster_name}** 面前逃脫了！",
+            color=discord.Color.orange()
+        )
+        await interaction.response.edit_message(embed=embed, view=self)
+        self.stop()
+
+    async def process_turn(self, interaction: discord.Interaction, action: str):
         await interaction.response.defer()
-
-        if not self.is_adventure_ambush:
-            current_mp, max_mp = update_and_get_mp(self.user_id)
-            if current_mp < MP_COST_PER_BATTLE:
-                await interaction.followup.send("❌ 你的 MP 不足，無法發動攻擊！", ephemeral=True)
-                return
-            consume_mp(self.user_id, MP_COST_PER_BATTLE)
-
+        
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT hp, max_hp, atk, def, weapon_atk, armor_def, gold 
-            FROM players WHERE user_id = ?
-        """, (self.user_id,))
-        player = cursor.fetchone()
-        
-        hp, max_hp, base_atk, base_def, weapon_atk, armor_def, gold = player
+        try:
+            # 取得玩家最新數值與裝備加成
+            cursor.execute("""
+                SELECT hp, max_hp, atk, def, weapon_atk, armor_def 
+                FROM players WHERE user_id = ?
+            """, (self.user_id,))
+            player = cursor.fetchone()
+            if not player:
+                await interaction.followup.send("⚠️ 找不到你的角色資料！", ephemeral=True)
+                return
 
-        # ⚔️ 計算總攻擊力與總防禦力（基礎數值 + 裝備加成）
-        total_atk = base_atk + weapon_atk
-        total_def = base_def + armor_def
+            hp, max_hp, base_atk, base_def, weapon_atk, armor_def = player
+            total_atk = base_atk + (weapon_atk or 0)
+            total_def = base_def + (armor_def or 0)
 
-        m_hp = self.monster_hp
-        turns = 0
-        total_damage_taken = 0
+            # 1. 玩家攻擊回合
+            if action == "attack":
+                player_dmg = max(5, total_atk - random.randint(0, 5))
+                action_desc = f"你對 **{self.monster_name}** 發動普通攻擊，造成了 `{player_dmg}` 點傷害！"
+            else:  # skill
+                player_dmg = max(12, int(total_atk * 1.5) - random.randint(0, 3))
+                action_desc = f"你消耗 15 MP 施放強力技能，對 **{self.monster_name}** 造成了 `{player_dmg}` 點重創！"
 
-        while m_hp > 0 and hp > 0 and turns < 10:
-            turns += 1
-            # 玩家攻擊力套用總 ATK
-            damage_to_monster = max(1, total_atk + random.randint(-2, 3))
-            m_hp -= damage_to_monster
+            self.monster_hp -= player_dmg
 
-            if m_hp <= 0:
-                break
+            # 2. 檢查怪物是否死亡（戰鬥勝利）
+            if self.monster_hp <= 0:
+                gold_reward = random.randint(15, 30)
+                # 40% 機率掉落隨機素材
+                dropped_item = random.choice(["生命藥水", "鐵劍碎片", "魔力藥水"]) if random.random() < 0.4 else None
+                
+                cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (gold_reward, self.user_id))
+                
+                reward_text = f"💰 獲得金幣：`+{gold_reward} G`"
+                if dropped_item:
+                    cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (self.user_id, dropped_item))
+                    row = cursor.fetchone()
+                    if row:
+                        cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (self.user_id, dropped_item))
+                    else:
+                        cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (self.user_id, dropped_item))
+                    reward_text += f"\n🎁 獲得戰利品：**{dropped_item}** x `1`"
 
-            # 🛡️ 怪物攻擊力套用防禦力減傷：damage = 怪物攻擊力 - 玩家總防禦力（保險起見最低扣 1 血）
-            net_monster_damage = self.monster_atk - total_def
-            damage_to_player = max(1, net_monster_damage + random.randint(-1, 2))
-            
-            hp -= damage_to_player
-            total_damage_taken += damage_to_player
+                conn.commit()
 
-        hp = max(0, hp)
+                for child in self.children:
+                    child.disabled = True
 
-        if hp > 0:
-            reward_gold = random.randint(10, 20) if self.is_adventure_ambush else random.randint(15, 35)
-            
-            chest_chance = 0.25 if self.is_adventure_ambush else 0.2
-            got_chest = random.random() < chest_chance
-            
-            if got_chest:
-                cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = '神秘寶箱'", (self.user_id,))
-                if cursor.fetchone():
-                    cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = '神秘寶箱'", (self.user_id,))
+                embed = discord.Embed(
+                    title="🎉 【戰鬥勝利！】",
+                    description=f"你成功擊敗了 **{self.monster_name}**！\n\n{action_desc}\n\n**【戰利品結算】**\n{reward_text}",
+                    color=discord.Color.green()
+                )
+                if self.message:
+                    await self.message.edit(embed=embed, view=self)
                 else:
-                    cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, '神秘寶箱', 1)", (self.user_id,))
+                    await interaction.followup.send(embed=embed)
+                self.stop()
+                return
 
-            cursor.execute("UPDATE players SET hp = ?, gold = gold + ? WHERE user_id = ?", (hp, gold + reward_gold, self.user_id))
+            # 3. 怪物反擊回合
+            monster_dmg = max(1, self.monster_atk - int(total_def * 0.4))
+            hp = max(0, hp - monster_dmg)
+            cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (hp, self.user_id))
             conn.commit()
+
+            # 4. 檢查玩家是否倒地
+            if hp <= 0:
+                for child in self.children:
+                    child.disabled = True
+                embed = discord.Embed(
+                    title="💀 【戰鬥失敗】",
+                    description=f"{action_desc}\n\n**{self.monster_name}** 反擊造成了 `{monster_dmg}` 點傷害。\n你體力不支倒地了！已被送往診所治療。",
+                    color=discord.Color.red()
+                )
+                if self.message:
+                    await self.message.edit(embed=embed, view=self)
+                else:
+                    await interaction.followup.send(embed=embed)
+                self.stop()
+                return
+
+            # 5. 更新戰鬥面板
+            embed = discord.Embed(
+                title="⚔️ 【回合戰鬥進行中】",
+                description=action_desc,
+                color=discord.Color.gold()
+            )
+            embed.add_field(name="🤖 怪物狀態", value=f"**{self.monster_name}**\n❤️ 剩餘血量：`{self.monster_hp}` HP", inline=True)
+            embed.add_field(name="🛡️ 你的狀態", value=f"❤️ 血量：`{hp}/{max_hp}`\n⚔️ 攻擊力：`{total_atk}`", inline=True)
+            embed.set_footer(text="💡 60秒未操作將自動過期。")
+
+            if self.message:
+                await self.message.edit(embed=embed, view=self)
+
+        finally:
             cursor.close()
             conn.close()
-
-            embed = discord.Embed(title="🎉 【戰鬥勝利！】", color=discord.Color.green())
-            desc = (
-                f"你成功擊敗了 🤖 **{self.monster_name}**（歷時 `{turns}` 回合）！\n\n"
-                f"⚔️ **總攻擊力**：`{total_atk}` | 🛡️ **總防禦力**：`{total_def}`\n"
-                f"⚔️ **戰鬥結算**：承受了 `{total_damage_taken}` 點傷害（剩餘血量：`{hp}/{max_hp}`）\n"
-                f"💰 **獲得獎勵**：`+{reward_gold} G`"
-            )
-            if got_chest:
-                desc += "\n🎁 **額外戰利品**：獲得了 **✨ 神秘寶箱 x 1**！"
-            
-            embed.description = desc
-            self.stop()
-            await interaction.edit_original_response(embed=embed, view=None)
-        else:
-            recovered_hp = min(max_hp, 50)
-            cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (recovered_hp, self.user_id))
-            conn.commit()
-            cursor.close()
-            conn.close()
-
-            embed = discord.Embed(title="🏥💥 【戰鬥失敗 · 倒地送醫】", color=discord.Color.blue())
-            embed.description = (
-                f"你在與 🤖 **{self.monster_name}** 激戰後不敵倒地！\n"
-                f"緊急被抬進了**新手村診所**進行治療... 🩺\n\n"
-                f"❤️ **當前血量已恢復至**：`{recovered_hp}/{max_hp}`"
-            )
-            self.stop()
-            await interaction.edit_original_response(embed=embed, view=None)
-
-    @discord.ui.button(label="嘗試逃跑", style=discord.ButtonStyle.secondary, emoji="🏃")
-    async def run_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        embed = discord.Embed(
-            title="🏃 【安全撤退】",
-            description=f"你成功甩開了 🤖 **{self.monster_name}**，平安脫離戰場！",
-            color=discord.Color.gold()
-        )
-        self.stop()
-        await interaction.edit_original_response(embed=embed, view=None)
 
 class Battle(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="打怪", description="發動戰鬥遭遇野生怪物，透過武器與防禦力迎戰")
-    async def fight(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+    @app_commands.command(name="battle", description="在荒野中尋找野生怪物進行主動戰鬥")
+    async def battle(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
 
-        current_mp, max_mp = update_and_get_mp(user_id)
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT role, hp, max_hp FROM players WHERE user_id = ?", (user_id,))
         player = cursor.fetchone()
-
-        if not player or not player[0]:
-            cursor.close()
-            conn.close()
-            await interaction.followup.send("⚠️ 你尚未選擇身份！請先使用 `/setup_roles` 選擇職業。", ephemeral=True)
-            return
-
-        role, hp, max_hp = player
-
-        if hp <= 0:
-            new_hp = min(max_hp, 50)
-            cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, user_id))
-            conn.commit()
-            cursor.close()
-            conn.close()
-            embed = discord.Embed(title="🏥 【新手村診所】", color=discord.Color.blue())
-            embed.description = f"你目前處於倒地狀態，已被送往診所治療！\n❤️ 血量恢復至：`{new_hp}/{max_hp}`"
-            await interaction.followup.send(embed=embed)
-            return
-
         cursor.close()
         conn.close()
 
-        if current_mp < MP_COST_PER_BATTLE:
-            await interaction.followup.send(f"⚡ 魔力不足！當前 MP：`{current_mp}/{max_mp}`，打怪需 `{MP_COST_PER_BATTLE}` MP。", ephemeral=True)
+        if not player or not player[0]:
+            await interaction.followup.send("⚠️ 你尚未選擇身份！請先使用 `/setup_roles` 選擇職業。", ephemeral=True)
             return
 
-        monster_names = ["狂暴巡邏機械", "變異流浪者", "廢土鋼鐵蜥蜴", "失控維護機器人"]
-        monster_name = random.choice(monster_names)
-        monster_hp = random.randint(40, 90)
-        monster_atk = random.randint(12, 22)
+        if player[1] <= 0:
+            await interaction.followup.send("⚠️ 你目前處於倒地狀態，無法進行戰鬥！請先透過冒險或診所恢復。", ephemeral=True)
+            return
 
-        embed = discord.Embed(title="⚠️ 【遭遇野生敵對目標！】", color=discord.Color.orange())
-        embed.add_field(name="🤖 怪物", value=f"**{monster_name}**", inline=True)
+        # 隨機產生野生怪物
+        monster_names = ["荒野流民", "廢土狂徒", "失控機械兵", "暴走掠奪者"]
+        monster_name = random.choice(monster_names)
+        monster_hp = random.randint(45, 75)
+        monster_atk = random.randint(10, 22)
+
+        embed = discord.Embed(
+            title="⚔️ 【遭遇野生怪物！】",
+            description="你在荒野中鎖定了一隻目標，準備迎戰！",
+            color=discord.Color.orange()
+        )
+        embed.add_field(name="🤖 目標怪物", value=f"**{monster_name}**", inline=True)
         embed.add_field(name="❤️ 血量", value=f"`{monster_hp}` HP", inline=True)
         embed.add_field(name="⚔️ 攻擊力", value=f"`{monster_atk}` ATK", inline=True)
-        embed.set_footer(text=f"💡 戰鬥消耗 {MP_COST_PER_BATTLE} MP，60秒未操作將自動過期！")
+        embed.set_footer(text="💡 60秒未操作將自動過期。")
 
-        view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk, is_adventure_ambush=False)
-        
-        # 傳送訊息並將訊息物件綁定給 view.message，以便 60 秒超時後自動更新按鈕與提示
-        sent_message = await interaction.followup.send(embed=embed, view=view, wait=True)
+        view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk)
+        sent_message = await interaction.followup.send(embed=embed, view=view, ephemeral=True, wait=True)
         view.message = sent_message
 
 async def setup(bot):
