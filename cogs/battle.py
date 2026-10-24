@@ -14,6 +14,24 @@ class BattleChoiceView(discord.ui.View):
         self.monster_hp = monster_hp
         self.monster_atk = monster_atk
         self.is_adventure_ambush = is_adventure_ambush
+        self.message = None  # 用來儲存該則訊息物件，供超時後編輯
+
+    async def on_timeout(self):
+        """⏳ 當 60 秒超時且玩家未點擊時自動觸發"""
+        if self.message:
+            try:
+                # 將所有按鈕設為禁用狀態 (disabled=True)
+                for child in self.children:
+                    child.disabled = True
+                
+                expired_embed = discord.Embed(
+                    title="⏰ 【遭遇戰已過期】",
+                    description=f"你猶豫太久了，**{self.monster_name}** 趁你分心時悄悄離開了現場...",
+                    color=discord.Color.dark_gray()
+                )
+                await self.message.edit(embed=expired_embed, view=self)
+            except Exception:
+                pass  # 避免訊息已被刪除或互動失效時報錯
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
@@ -34,11 +52,6 @@ class BattleChoiceView(discord.ui.View):
 
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT hp, max_hp, atk, def, weapon_atk, armor_net, gold 
-            FROM players WHERE user_id = ?
-        """, (self.user_id,))
-        # 修正欄位抓取對應
         cursor.execute("""
             SELECT hp, max_hp, atk, def, weapon_atk, armor_def, gold 
             FROM players WHERE user_id = ?
@@ -175,16 +188,19 @@ class Battle(commands.Cog):
         monster_names = ["狂暴巡邏機械", "變異流浪者", "廢土鋼鐵蜥蜴", "失控維護機器人"]
         monster_name = random.choice(monster_names)
         monster_hp = random.randint(40, 90)
-        monster_atk = random.randint(12, 22) # 微調怪物攻擊力，搭配防禦減傷系統更合理
+        monster_atk = random.randint(12, 22)
 
         embed = discord.Embed(title="⚠️ 【遭遇野生敵對目標！】", color=discord.Color.orange())
         embed.add_field(name="🤖 怪物", value=f"**{monster_name}**", inline=True)
         embed.add_field(name="❤️ 血量", value=f"`{monster_hp}` HP", inline=True)
         embed.add_field(name="⚔️ 攻擊力", value=f"`{monster_atk}` ATK", inline=True)
-        embed.set_footer(text=f"💡 戰鬥消耗 {MP_COST_PER_BATTLE} MP，防禦力將有效抵擋怪物傷害！")
+        embed.set_footer(text=f"💡 戰鬥消耗 {MP_COST_PER_BATTLE} MP，60秒未操作將自動過期！")
 
         view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk, is_adventure_ambush=False)
-        await interaction.followup.send(embed=embed, view=view)
+        
+        # 傳送訊息並將訊息物件綁定給 view.message，以便 60 秒超時後自動更新按鈕與提示
+        sent_message = await interaction.followup.send(embed=embed, view=view, wait=True)
+        view.message = sent_message
 
 async def setup(bot):
     await bot.add_cog(Battle(bot))

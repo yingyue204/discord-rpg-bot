@@ -3,7 +3,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from db import get_db_connection
-from cogs.battle import BattleChoiceView  #引用戰鬥按鈕來處理突發怪物
+from cogs.battle import BattleChoiceView  # 引用戰鬥按鈕來處理突發怪物
 
 class Adventure(commands.Cog):
     def __init__(self, bot):
@@ -59,17 +59,20 @@ class Adventure(commands.Cog):
             embed.add_field(name="🤖 突發怪物", value=f"**{monster_name}**", inline=True)
             embed.add_field(name="❤️ 血量", value=f"`{monster_hp}` HP", inline=True)
             embed.add_field(name="⚔️ 攻擊力", value=f"`{monster_atk}` ATK", inline=True)
-            embed.set_footer(text="💡 擊敗突發敵人有更高的寶箱掉落機會！")
+            embed.set_footer(text="💡 擊敗突發敵人有更高的寶箱掉落機會！60秒未操作將自動過期。")
 
             # 呼叫 BattleChoiceView，標記為冒險突發戰鬥 (is_adventure_ambush=True)
             view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk, is_adventure_ambush=True)
-            await interaction.followup.send(embed=embed, view=view)
+            
+            # 傳送訊息並將訊息物件綁定給 view.message，以便 60 秒超時後自動更新按鈕狀態
+            sent_message = await interaction.followup.send(embed=embed, view=view, wait=True)
+            view.message = sent_message
             return
 
         # 🎒 平安搜刮邏輯
         found_gold = random.randint(5, 15)
         
-        # 冒險獲得寶箱的機率調降為 3%（低機率）
+        # 冒險獲得寶箱的機率
         got_chest = random.random() < 0.1
         if got_chest:
             found_item = "神秘寶箱"
