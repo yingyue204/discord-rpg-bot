@@ -14,8 +14,12 @@ class Status(commands.Cog):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # 查詢玩家資料（只讀取 hp, max_hp, atk, def, gold，不再包含 spd/速度）
-        cursor.execute("SELECT role, hp, max_hp, atk, def, mp, gold FROM players WHERE user_id = ?", (interaction.user.id,))
+        # 🔍 查詢玩家資料，完整包含裝備名稱與加成數值
+        cursor.execute("""
+            SELECT role, hp, max_hp, atk, def, mp, gold, 
+                   weapon_name, weapon_atk, armor_name, armor_def 
+            FROM players WHERE user_id = ?
+        """, (interaction.user.id,))
         player = cursor.fetchone()
 
         if not player or not player[0]:
@@ -24,21 +28,39 @@ class Status(commands.Cog):
             await interaction.followup.send("⚠️ 你尚未選擇身份！請先使用 `/setup_roles` 面板選擇職業。", ephemeral=True)
             return
 
-        role_name, hp, max_hp, atk, player_def, mp, gold = player
+        role_name, hp, max_hp, atk, player_def, mp, gold, weapon_name, weapon_atk, armor_name, armor_def = player
         cursor.close()
         conn.close()
 
-        # 建立個人檔案 Embed（已將速度欄位完全刪除）
+        # ⚔️ 計算總攻擊力與總防禦力（基礎數值 + 裝備加成）
+        total_atk = atk + (weapon_atk or 0)
+        total_def = player_def + (armor_def or 0)
+
+        # 建立個人檔案 Embed
         embed = discord.Embed(
             title=f"📊 [{interaction.user.display_name} · 特務檔案]",
             color=discord.Color.green()
         )
         embed.add_field(name="🏷️ 當前職業", value=f"**{role_name}**", inline=False)
         embed.add_field(name="❤️ 生命值", value=f"{hp}/{max_hp}", inline=True)
-        embed.add_field(name="⚔️ 攻擊力", value=f"{atk}", inline=True)
-        embed.add_field(name="🛡️ 防禦力", value=f"{player_def}", inline=True)
         embed.add_field(name="💧 魔力值", value=f"{mp}", inline=True)
         embed.add_field(name="💰 金幣", value=f"{gold} G", inline=True)
+        
+        # 顯示總數值與詳細拆解
+        embed.add_field(
+            name="⚔️ 攻擊力 (ATK)", 
+            value=f"總計：**`{total_atk}`**\n(基礎 `{atk}` + 武器 `+{weapon_atk or 0}`)", 
+            inline=False
+        )
+        embed.add_field(
+            name="🛡️ 防禦力 (DEF)", 
+            value=f"總計：**`{total_def}`**\n(基礎 `{player_def}` + 防具 `+{armor_def or 0}`)", 
+            inline=False
+        )
+        
+        # 顯示目前穿戴的裝備
+        embed.add_field(name="🗡️ 當前武器", value=f"`{weapon_name or '無'}`", inline=True)
+        embed.add_field(name="🛡️ 當前防具", value=f"`{armor_name or '無'}`", inline=True)
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 

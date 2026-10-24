@@ -102,7 +102,7 @@ def consume_mp(user_id: int, cost: int):
         cursor.close()
         conn.close()
 
-# 🎁 開啟神秘寶箱邏輯
+# 🎁 開啟神秘寶箱邏輯（完整回傳 6 個值以支援 bag.py 的顏色與裝備提示）
 def open_chest_in_db(user_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -111,7 +111,7 @@ def open_chest_in_db(user_id: int):
         item = cursor.fetchone()
 
         if not item or item[0] <= 0:
-            return False, "你的背包裡沒有 **神秘寶箱**！"
+            return False, "你的背包裡沒有 **神秘寶箱**！", None, None, None, None
 
         if item[0] > 1:
             cursor.execute("UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_name = '神秘寶箱'", (user_id,))
@@ -133,7 +133,8 @@ def open_chest_in_db(user_id: int):
         if is_weapon:
             weapon_base = random.choice(["光束劍", "高振動短刀", "電磁打擊槍", "重型巨斧"])
             item_name = f"【{prefix}】{weapon_base}"
-            
+            bonus = 15 if "精良" in quality else (25 if "史詩" in quality else (40 if "傳說級" in quality else 8))
+
             cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
             existing = cursor.fetchone()
             if existing:
@@ -142,11 +143,12 @@ def open_chest_in_db(user_id: int):
                 cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, item_name))
 
             conn.commit()
-            msg = f"🎉 成功開啟 **神秘寶箱**！\n獲得武器：**{item_name}**（品質：{quality}）"
-            return True, msg
+            msg = f"🎉 成功開啟 **神秘寶箱**！\n獲得武器：**{item_name}**（品質：{quality}）\n⚔️ **攻擊力加成**：`+{bonus}`\n💡 輸入 `/equip item_name:{item_name}` 即可裝備！"
+            return True, msg, item_name, "weapon", bonus, quality
         else:
             armor_base = random.choice(["戰術護甲", "納米防護服", "合金重盾", "外骨骼裝甲"])
             item_name = f"【{prefix}】{armor_base}"
+            bonus = 10 if "精良" in quality else (18 if "史詩" in quality else (30 if "傳說級" in quality else 5))
 
             cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
             existing = cursor.fetchone()
@@ -156,8 +158,8 @@ def open_chest_in_db(user_id: int):
                 cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, item_name))
 
             conn.commit()
-            msg = f"🎉 成功開啟 **神秘寶箱**！\n獲得防具：**{item_name}**（品質：{quality}）"
-            return True, msg
+            msg = f"🎉 成功開啟 **神秘寶箱**！\n獲得防具：**{item_name}**（品質：{quality}）\n🛡️ **防禦力加成**：`+{bonus}`\n💡 輸入 `/equip item_name:{item_name}` 即可裝備！"
+            return True, msg, item_name, "armor", bonus, quality
     finally:
         cursor.close()
         conn.close()
