@@ -9,7 +9,7 @@ class Adventure(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="adventure", description="前往未知區域進行冒險與搜刮（低機率獲取寶箱，可能遭遇突發怪物）")
+    @app_commands.command(name="adventure", description="前往未知區域進行快速冒險與搜刮（隨機遭遇突發怪物與寶箱）")
     async def adventure(self, interaction: discord.Interaction):
         await interaction.response.defer()
         user_id = interaction.user.id
@@ -61,10 +61,8 @@ class Adventure(commands.Cog):
             embed.add_field(name="⚔️ 攻擊力", value=f"`{monster_atk}` ATK", inline=True)
             embed.set_footer(text="💡 擊敗突發敵人有更高的寶箱掉落機會！60秒未操作將自動過期。")
 
-            # 呼叫 BattleChoiceView，標記為冒險突發戰鬥 (is_adventure_ambush=True)
+            # 呼叫 BattleChoiceView，並將訊息物件綁定給 view.message 以支援超時機制
             view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk, is_adventure_ambush=True)
-            
-            # 傳送訊息並將訊息物件綁定給 view.message，以便 60 秒超時後自動更新按鈕狀態
             sent_message = await interaction.followup.send(embed=embed, view=view, wait=True)
             view.message = sent_message
             return
@@ -72,7 +70,7 @@ class Adventure(commands.Cog):
         # 🎒 平安搜刮邏輯
         found_gold = random.randint(5, 15)
         
-        # 冒險獲得寶箱的機率
+        # 冒險獲得寶箱的機率 (10%)
         got_chest = random.random() < 0.1
         if got_chest:
             found_item = "神秘寶箱"
