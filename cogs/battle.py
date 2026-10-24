@@ -74,9 +74,9 @@ class BattleChoiceView(discord.ui.View):
         hp = max(0, hp)
 
         if hp > 0:
-            reward_gold = random.randint(20, 40) if self.is_adventure_ambush else random.randint(15, 35)
+            reward_gold = random.randint(10, 20) if self.is_adventure_ambush else random.randint(15, 35)
             
-            chest_chance = 0.50 if self.is_adventure_ambush else 0.30
+            chest_chance = 0.25 if self.is_adventure_ambush else 0.2
             got_chest = random.random() < chest_chance
             
             if got_chest:

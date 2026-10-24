@@ -3,7 +3,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from db import get_db_connection
-from cogs.battle import BattleChoiceView  // 引用戰鬥按鈕來處理突發怪物
+from cogs.battle import BattleChoiceView  #引用戰鬥按鈕來處理突發怪物
 
 class Adventure(commands.Cog):
     def __init__(self, bot):
@@ -70,7 +70,7 @@ class Adventure(commands.Cog):
         found_gold = random.randint(5, 15)
         
         # 冒險獲得寶箱的機率調降為 3%（低機率）
-        got_chest = random.random() < 0.2
+        got_chest = random.random() < 0.1
         if got_chest:
             found_item = "神秘寶箱"
         else:
