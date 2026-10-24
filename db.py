@@ -2,25 +2,21 @@ import sqlite3
 import random
 import time
 
-# 取得資料庫連線（開啟 WAL 模式與 20 秒 timeout，防止 database is locked 錯誤）
 def get_db_connection():
     conn = sqlite3.connect("database.db", timeout=20.0)
     conn.execute("PRAGMA journal_mode=WAL;")
     return conn
 
-# 初始化資料庫表格與補齊結構
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        # 1. 玩家主表
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS players (
                 user_id INTEGER PRIMARY KEY
             )
         """)
         
-        # 2. 自動檢查與補齊欄位
         columns_to_add = {
             "role": "TEXT",
             "hp": "INTEGER DEFAULT 100",
@@ -44,7 +40,6 @@ def init_db():
             if col_name not in existing_columns:
                 cursor.execute(f"ALTER TABLE players ADD COLUMN {col_name} {col_type}")
                 
-        # 3. 背包資料表
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS inventory (
                 user_id INTEGER,
@@ -59,10 +54,9 @@ def init_db():
         cursor.close()
         conn.close()
 
-# 執行初始化
 init_db()
 
-# 🔄 自動計算並更新玩家自然回魔 (每分鐘恢復 5 MP)
+# 🔄 自動計算並更新玩家自然回魔
 def update_and_get_mp(user_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -84,7 +78,7 @@ def update_and_get_mp(user_id: int):
         passed_minutes = (now - last_update) // 60
         
         if passed_minutes > 0 and mp < max_mp:
-            recovered_mp = passed_minutes * 5  # 每分鐘 +5 MP
+            recovered_mp = passed_minutes * 5
             new_mp = min(max_mp, mp + recovered_mp)
             new_last_update = last_update + (passed_minutes * 60)
             
@@ -97,7 +91,6 @@ def update_and_get_mp(user_id: int):
         cursor.close()
         conn.close()
 
-# ⚡ 扣除指定 MP
 def consume_mp(user_id: int, cost: int):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -120,30 +113,27 @@ def open_chest_in_db(user_id: int):
         if not item or item[0] <= 0:
             return False, "你的背包裡沒有 **神秘寶箱**！"
 
-        # 扣除 1 個寶箱
         if item[0] > 1:
             cursor.execute("UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_name = '神秘寶箱'", (user_id,))
         else:
             cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = '神秘寶箱'", (user_id,))
 
-        # 機率抽取品質
         quality_roll = random.random()
         if quality_roll < 0.60:
-            quality, prefix, multiplier = "⚪ 普通", "普通", 1.0
+            quality, prefix = "⚪ 普通", "普通"
         elif quality_roll < 0.85:
-            quality, prefix, multiplier = "🔵 稀有", "精良", 1.8
+            quality, prefix = "🔵 稀有", "精良"
         elif quality_roll < 0.97:
-            quality, prefix, multiplier = "🟣 史詩", "史詩", 2.8
+            quality, prefix = "🟣 史詩", "史詩"
         else:
-            quality, prefix, multiplier = "🟡 傳說", "傳說級", 4.5
+            quality, prefix = "🟡 傳說", "傳說級"
 
         is_weapon = random.choice([True, False])
 
         if is_weapon:
             weapon_base = random.choice(["光束劍", "高振動短刀", "電磁打擊槍", "重型巨斧"])
             item_name = f"【{prefix}】{weapon_base}"
-            bonus_atk = int(random.randint(5, 12) * multiplier)
-
+            
             cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
             existing = cursor.fetchone()
             if existing:
@@ -152,12 +142,11 @@ def open_chest_in_db(user_id: int):
                 cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, item_name))
 
             conn.commit()
-            msg = f"🎉 成功開啟 **神秘寶箱**！\n獲得武器：**{item_name}**（品質：{quality}）\n⚔️ **攻擊力加成**：`+{bonus_atk}`"
-            return True, msg, item_name, "weapon", bonus_atk, quality
+            msg = f"🎉 成功開啟 **神秘寶箱**！\n獲得武器：**{item_name}**（品質：{quality}）"
+            return True, msg
         else:
             armor_base = random.choice(["戰術護甲", "納米防護服", "合金重盾", "外骨骼裝甲"])
             item_name = f"【{prefix}】{armor_base}"
-            bonus_def = int(random.randint(3, 8) * multiplier)
 
             cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
             existing = cursor.fetchone()
@@ -167,13 +156,84 @@ def open_chest_in_db(user_id: int):
                 cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, item_name))
 
             conn.commit()
-            msg = f"🎉 成功開啟 **神秘寶箱**！\n獲得防具：**{item_name}**（品質：{quality}）\n🛡️ **防禦力加成**：`+{bonus_def}`"
-            return True, msg, item_name, "armor", bonus_def, quality
+            msg = f"🎉 成功開啟 **神秘寶箱**！\n獲得防具：**{item_name}**（品質：{quality}）"
+            return True, msg
     finally:
         cursor.close()
         conn.close()
 
-# 🧪 道具使用邏輯（支援生命藥水、急救包、魔力藥水、能量飲料）
+# 🛡️ 穿戴裝備邏輯
+def equip_item_in_db(user_id: int, item_name: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # 1. 檢查背包是否有此裝備
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        item = cursor.fetchone()
+        if not item or item[0] <= 0:
+            return False, "❌ 你的背包裡沒有這個道具！"
+
+        # 2. 判斷是武器還是防具，並計算數值
+        # 依據名稱中的品質給予固定加成：普通(+8/+5)、精良(+15/+10)、史詩(+25/+18)、傳說級(+40/+30)
+        if "光束劍" in item_name or "高振動短刀" in item_name or "電磁打擊槍" in item_name or "重型巨斧" in item_name:
+            is_weapon = True
+            if "普通" in item_name: atk_bonus = 8
+            elif "精良" in item_name: atk_bonus = 15
+            elif "史詩" in item_name: atk_bonus = 25
+            elif "傳說級" in item_name: atk_bonus = 40
+            else: atk_bonus = 5
+        elif "戰術護甲" in item_name or "納米防護服" in item_name or "合金重盾" in item_name or "外骨骼裝甲" in item_name:
+            is_weapon = False
+            if "普通" in item_name: def_bonus = 5
+            elif "精良" in item_name: def_bonus = 10
+            elif "史詩" in item_name: def_bonus = 18
+            elif "傳說級" in item_name: def_bonus = 30
+            else: def_bonus = 3
+        else:
+            return False, "❌ 這個道具不是裝備，無法穿戴！"
+
+        # 3. 處理裝備對調（若原本有裝備，需放回背包或直接覆蓋。這裡設計為：解除舊裝備回背包，裝上新裝備）
+        cursor.execute("SELECT weapon_name, armor_name FROM players WHERE user_id = ?", (user_id,))
+        player_gear = cursor.fetchone()
+        old_weapon, old_armor = player_gear[0], player_gear[1]
+
+        # 扣除背包中要穿戴的新裝備 1 個
+        if item[0] > 1:
+            cursor.execute("UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        else:
+            cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+
+        if is_weapon:
+            # 如果原本有裝備武器，放回背包
+            if old_weapon and old_weapon != '無':
+                cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, old_weapon))
+                if cursor.fetchone():
+                    cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, old_weapon))
+                else:
+                    cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, old_weapon))
+            
+            # 更新玩家武器
+            cursor.execute("UPDATE players SET weapon_name = ?, weapon_atk = ? WHERE user_id = ?", (item_name, atk_bonus, user_id))
+            conn.commit()
+            return True, f"⚔️ 成功裝備武器：**{item_name}**（攻擊力 `+{atk_bonus}`）！"
+        else:
+            # 如果原本有裝備防具，放回背包
+            if old_armor and old_armor != '無':
+                cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, old_armor))
+                if cursor.fetchone():
+                    cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, old_armor))
+                else:
+                    cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, old_armor))
+
+            # 更新玩家防具
+            cursor.execute("UPDATE players SET armor_name = ?, armor_def = ? WHERE user_id = ?", (item_name, def_bonus, user_id))
+            conn.commit()
+            return True, f"🛡️ 成功裝備防具：**{item_name}**（防禦力 `+{def_bonus}`）！"
+    finally:
+        cursor.close()
+        conn.close()
+
+# 🧪 道具使用邏輯
 def use_item_in_db(user_id: int, item_name: str):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -220,13 +280,13 @@ def use_item_in_db(user_id: int, item_name: str):
             cursor.execute("UPDATE players SET mp = ? WHERE user_id = ?", (new_mp, user_id))
             effect_msg = f"成功使用了 **能量飲料**！瞬間恢復了 `{actual_mp}` 點魔力值（當前魔力：`{new_mp}/{max_mp}`）。"
         else:
-            return False, f"**{item_name}** 無法直接使用！請確認是否為可消耗道具。"
+            return False, f"**{item_name}** 無法直接使用！如果是裝備，請使用 `/equip` 指令進行穿戴。"
 
         new_qty = item[0] - 1
         if new_qty > 0:
             cursor.execute("UPDATE inventory SET quantity = ? WHERE user_id = ? AND item_name = ?", (new_qty, user_id, item_name))
         else:
-            cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ?", (new_qty, user_id, item_name))
+            cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
             
         conn.commit()
         return True, effect_msg
@@ -234,7 +294,6 @@ def use_item_in_db(user_id: int, item_name: str):
         cursor.close()
         conn.close()
 
-# 💥 扣血計算
 def take_damage(user_id: int, damage: int):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -254,7 +313,6 @@ def take_damage(user_id: int, damage: int):
         cursor.close()
         conn.close()
 
-# 🧹 管理員重置玩家資料
 def reset_player_data(user_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()

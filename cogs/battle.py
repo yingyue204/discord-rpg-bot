@@ -13,7 +13,7 @@ class BattleChoiceView(discord.ui.View):
         self.monster_name = monster_name
         self.monster_hp = monster_hp
         self.monster_atk = monster_atk
-        self.is_adventure_ambush = is_adventure_ambush  // 標記是否為冒險突發戰鬥
+        self.is_adventure_ambush = is_adventure_ambush
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
@@ -25,7 +25,6 @@ class BattleChoiceView(discord.ui.View):
     async def attack_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
 
-        # 如果不是冒險突發戰鬥，才需要扣除 MP
         if not self.is_adventure_ambush:
             current_mp, max_mp = update_and_get_mp(self.user_id)
             if current_mp < MP_COST_PER_BATTLE:
@@ -35,9 +34,22 @@ class BattleChoiceView(discord.ui.View):
 
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT role, hp, max_hp, atk, def, gold FROM players WHERE user_id = ?", (self.user_id,))
+        cursor.execute("""
+            SELECT hp, max_hp, atk, def, weapon_atk, armor_net, gold 
+            FROM players WHERE user_id = ?
+        """, (self.user_id,))
+        # 修正欄位抓取對應
+        cursor.execute("""
+            SELECT hp, max_hp, atk, def, weapon_atk, armor_def, gold 
+            FROM players WHERE user_id = ?
+        """, (self.user_id,))
         player = cursor.fetchone()
-        role, hp, max_hp, atk, player_def, gold = player
+        
+        hp, max_hp, base_atk, base_def, weapon_atk, armor_def, gold = player
+
+        # ⚔️ 計算總攻擊力與總防禦力（基礎數值 + 裝備加成）
+        total_atk = base_atk + weapon_atk
+        total_def = base_def + armor_def
 
         m_hp = self.monster_hp
         turns = 0
@@ -45,22 +57,25 @@ class BattleChoiceView(discord.ui.View):
 
         while m_hp > 0 and hp > 0 and turns < 10:
             turns += 1
-            damage_to_monster = max(1, atk + random.randint(-2, 3))
+            # 玩家攻擊力套用總 ATK
+            damage_to_monster = max(1, total_atk + random.randint(-2, 3))
             m_hp -= damage_to_monster
 
             if m_hp <= 0:
                 break
 
-            damage_to_player = max(1, self.monster_atk - player_def + random.randint(-1, 2))
+            # 🛡️ 怪物攻擊力套用防禦力減傷：damage = 怪物攻擊力 - 玩家總防禦力（保險起見最低扣 1 血）
+            net_monster_damage = self.monster_atk - total_def
+            damage_to_player = max(1, net_monster_damage + random.randint(-1, 2))
+            
             hp -= damage_to_player
             total_damage_taken += damage_to_player
 
         hp = max(0, hp)
 
         if hp > 0:
-            reward_gold = random.randint(10, 20) if self.is_adventure_ambush else random.randint(15, 25)
+            reward_gold = random.randint(20, 40) if self.is_adventure_ambush else random.randint(15, 35)
             
-            # 🎁 打怪勝利有 30% 機率獲得神秘寶箱（突發遭遇則有 50% 機率）
             chest_chance = 0.50 if self.is_adventure_ambush else 0.30
             got_chest = random.random() < chest_chance
             
@@ -79,6 +94,7 @@ class BattleChoiceView(discord.ui.View):
             embed = discord.Embed(title="🎉 【戰鬥勝利！】", color=discord.Color.green())
             desc = (
                 f"你成功擊敗了 🤖 **{self.monster_name}**（歷時 `{turns}` 回合）！\n\n"
+                f"⚔️ **總攻擊力**：`{total_atk}` | 🛡️ **總防禦力**：`{total_def}`\n"
                 f"⚔️ **戰鬥結算**：承受了 `{total_damage_taken}` 點傷害（剩餘血量：`{hp}/{max_hp}`）\n"
                 f"💰 **獲得獎勵**：`+{reward_gold} G`"
             )
@@ -89,7 +105,6 @@ class BattleChoiceView(discord.ui.View):
             self.stop()
             await interaction.edit_original_response(embed=embed, view=None)
         else:
-            # 倒地送醫
             recovered_hp = min(max_hp, 50)
             cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (recovered_hp, self.user_id))
             conn.commit()
@@ -120,7 +135,7 @@ class Battle(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="打怪", description="發動戰鬥遭遇野生怪物，打怪更容易獲得寶箱")
+    @app_commands.command(name="打怪", description="發動戰鬥遭遇野生怪物，透過武器與防禦力迎戰")
     async def fight(self, interaction: discord.Interaction):
         await interaction.response.defer()
         user_id = interaction.user.id
@@ -160,13 +175,13 @@ class Battle(commands.Cog):
         monster_names = ["狂暴巡邏機械", "變異流浪者", "廢土鋼鐵蜥蜴", "失控維護機器人"]
         monster_name = random.choice(monster_names)
         monster_hp = random.randint(40, 90)
-        monster_atk = random.randint(10, 25)
+        monster_atk = random.randint(12, 22) # 微調怪物攻擊力，搭配防禦減傷系統更合理
 
         embed = discord.Embed(title="⚠️ 【遭遇野生敵對目標！】", color=discord.Color.orange())
         embed.add_field(name="🤖 怪物", value=f"**{monster_name}**", inline=True)
         embed.add_field(name="❤️ 血量", value=f"`{monster_hp}` HP", inline=True)
         embed.add_field(name="⚔️ 攻擊力", value=f"`{monster_atk}` ATK", inline=True)
-        embed.set_footer(text=f"💡 戰鬥消耗 {MP_COST_PER_BATTLE} MP（打怪獲得寶箱機率高達 30%！）")
+        embed.set_footer(text=f"💡 戰鬥消耗 {MP_COST_PER_BATTLE} MP，防禦力將有效抵擋怪物傷害！")
 
         view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk, is_adventure_ambush=False)
         await interaction.followup.send(embed=embed, view=view)
