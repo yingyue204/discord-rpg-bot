@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from db import get_active_sellers, get_listings_by_seller, buy_market_item
+import traceback
 
 class SellerSelect(discord.ui.Select):
     """讓玩家選擇要逛哪一位其他玩家的商店"""
@@ -73,10 +74,8 @@ class PlayerStoreView(discord.ui.View):
         self.seller_id = seller_id
         self.add_item(ItemBuySelect(items))
         
-    # 修正：使用小寫的 discord.ui.button
     @discord.ui.button(label="⬅️ 返回商店大廳", style=discord.ButtonStyle.secondary)
     async def back_to_lobby(self, interaction: discord.Interaction, button: discord.ui.Button):
-        sellers = get_active_sellers(interaction.user.id)
         view = MarketMainView(interaction.user.id)
         embed = discord.Embed(
             title="🛒 【自由玩家市場】",
@@ -94,7 +93,6 @@ class MarketMainView(discord.ui.View):
         sellers = get_active_sellers(user_id)
         self.add_item(SellerSelect(sellers))
 
-    # 修正：使用小寫的 discord.ui.button
     @discord.ui.button(label="🏷️ 我要上架商品", style=discord.ButtonStyle.success, row=1)
     async def list_item_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("💡 請使用指令 `/market sell <道具名稱> <價格> <數量>` 來將道具上架至市場！", ephemeral=True)
@@ -107,15 +105,20 @@ class Market(commands.Cog):
     async def market(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         
-        embed = discord.Embed(
-            title="🛒 【自由玩家市場】",
-            description="歡迎來到玩家自由市場！\n在這裡你可以跟其他特務進行自由貿易。\n\n🛡️ **安全機制**：系統已自動過濾掉你自己的商店，防止洗錢行為。",
-            color=discord.Color.blue()
-        )
-        embed.set_footer(text="💡 請從下方選單選擇你想逛的玩家商店。")
+        try:
+            embed = discord.Embed(
+                title="🛒 【自由玩家市場】",
+                description="歡迎來到玩家自由市場！\n在這裡你可以跟其他特務進行自由貿易。\n\n🛡️ **安全機制**：系統已自動過濾掉你自己的商店，防止洗錢行為。",
+                color=discord.Color.blue()
+            )
+            embed.set_footer(text="💡 請從下方選單選擇你想逛的玩家商店。")
+            
+            view = MarketMainView(interaction.user.id)
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         
-        view = MarketMainView(interaction.user.id)
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        except Exception as e:
+            traceback.print_exc()
+            await interaction.followup.send(f"❌ 發生系統錯誤：`{e}`", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Market(bot))
