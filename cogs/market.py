@@ -1,11 +1,10 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from db import get_active_sellers, get_listings_by_seller, buy_market_item
+from db import get_active_sellers, get_listings_by_seller, buy_market_item, get_db_connection
 import traceback
 
 class SellerSelect(discord.ui.Select):
-    """讓玩家選擇要逛哪一位其他玩家的商店"""
     def __init__(self, sellers):
         options = []
         if not sellers:
@@ -32,7 +31,6 @@ class SellerSelect(discord.ui.Select):
             await interaction.response.send_message("❌ 該玩家目前已經沒有上架商品了。", ephemeral=True)
             return
             
-        # 顯示該玩家販售的商品選單
         view = PlayerStoreView(seller_id, items)
         embed = discord.Embed(
             title="🏪 【玩家個人商店】",
@@ -45,7 +43,6 @@ class SellerSelect(discord.ui.Select):
         await interaction.response.edit_message(embed=embed, view=view)
 
 class ItemBuySelect(discord.ui.Select):
-    """在特定玩家商店內選擇要買的商品"""
     def __init__(self, items):
         options = []
         for listing_id, item_name, price, qty in items:
@@ -89,6 +86,22 @@ class MarketMainView(discord.ui.View):
         super().__init__(timeout=60)
         self.user_id = user_id
         
+        # 🛡️ 確保 market_listings 表格絕對存在，防止查詢時報錯
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS market_listings (
+                listing_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                seller_id INTEGER,
+                item_name TEXT,
+                price INTEGER,
+                quantity INTEGER
+            )
+        """)
+        conn.commit()
+        cursor.close()
+        conn.close()
+
         # 動態載入可以逛的玩家選單
         sellers = get_active_sellers(user_id)
         self.add_item(SellerSelect(sellers))
