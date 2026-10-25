@@ -134,11 +134,9 @@ class BattleChoiceView(discord.ui.View):
             # 3. 怪物反擊回合
             monster_dmg = max(1, self.monster_atk - int(total_def * 0.4))
             hp = max(0, hp - monster_dmg)
+        
             cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (hp, self.user_id))
             conn.commit()
-
-            # 假設這是怪物反擊扣血的邏輯
-hp -= monster_dmg
 
 # 📌 關鍵：在扣完血的「當下」立刻檢查並即時觸發送醫
 if hp <= 0:

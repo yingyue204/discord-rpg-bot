@@ -3,7 +3,6 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from db import get_db_connection
-from cogs.battle import BattleChoiceView  # 引用戰鬥按鈕來處理突發怪物
 
 class Adventure(commands.Cog):
     def __init__(self, bot):
@@ -11,7 +10,7 @@ class Adventure(commands.Cog):
 
     @app_commands.command(name="adventure", description="前往未知區域進行快速冒險與搜刮（隨機遭遇突發怪物與寶箱）")
     async def adventure(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
 
         # 1. 從資料庫取得玩家的當前血量與體力
@@ -20,71 +19,56 @@ class Adventure(commands.Cog):
         cursor.execute("SELECT hp, max_hp, stamina, max_stamina FROM players WHERE user_id = ?", (user_id,))
         player_data = cursor.fetchone()
 
-        if not player or not player[0]:
+        if not player_data:
             cursor.close()
             conn.close()
             await interaction.followup.send("⚠️ 你尚未選擇身份！請先使用 `/setup_roles` 選擇職業。", ephemeral=True)
             return
 
-        role_name, hp, max_hp, stamina, max_stamina = player
+        hp, max_hp, stamina, max_stamina = player_data
 
-        # 假設這是怪物反擊扣血的邏輯
-hp -= monster_dmg
-
-# 📌 關鍵：在扣完血的「當下」立刻檢查並即時觸發送醫
+        # 2. 🏥 檢查玩家是否處於血量歸零／倒地狀態（直接送診所）
         if hp <= 0:
             new_hp = 50  # 診所急救恢復的血量
-    
-            # 1. 立即更新資料庫，將血量補回 50，避免留在 0
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, interaction.user.id))
+            cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, user_id))
             conn.commit()
             cursor.close()
             conn.close()
 
-            # 2. 停用戰鬥介面的按鈕
-            for child in self.children:
-            child.disabled = True
-        
-            # 3. 發送即時的診所敗北訊息
             embed = discord.Embed(
-            title="🏥 【新手村診所・緊急送醫】",
-            description=f"**{self.monster_name}** 反擊造成了 `{monster_dmg}` 點傷害。\n你體力不支倒地，已被緊急送往新手村診所治療！\n❤️ 當前血量已恢復至：`{new_hp}`",
-            color=discord.Color.red()
+                title="🏥 【新手村診所·緊急送醫】",
+                description=f"你目前處於倒地狀態，無法進行冒險！已被緊急送往新手村診所治療。\n💖 當前血量已恢復至：`{new_hp}` / `{max_hp}`",
+                color=discord.Color.red()
             )
-    
-            if self.message:
-                await self.message.edit(embed=embed, view=self)
-            else:
-                await interaction.followup.send(embed=embed, ephemeral=True)
-        
-            self.stop()
+            await interaction.followup.send(embed=embed, ephemeral=True)
             return
 
-# 3. 🌟 新增：檢查體力是否足夠（例如每次探索消耗 15 點體力）
-    stamina_cost = 15
-    if stamina < stamina_cost:
+        # 3. ⚡ 檢查體力是否足夠（每次探索消耗 15 點體力）
+        stamina_cost = 15
+        if stamina < stamina_cost:
+            cursor.close()
+            conn.close()
+            embed = discord.Embed(
+                title="⚡ 【體力耗盡】",
+                description=f"你的體力不足以支撐這次探索！\n當前體力：`{stamina}/{max_stamina}` (需要 `{stamina_cost}` 點)\n\n💡 請食用食物或等待體力恢復，才能繼續冒險！",
+                color=discord.Color.orange()
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+
+        # 4. 扣除體力並更新至資料庫
+        new_stamina = stamina - stamina_cost
+        cursor.execute("UPDATE players SET stamina = ? WHERE user_id = ?", (new_stamina, user_id))
+        conn.commit()
         cursor.close()
         conn.close()
-        embed = discord.Embed(
-            title="⚡ 【體力耗盡】",
-            description=f"你的體力不足以支撐這次探索！\n當前體力：`{stamina}/{max_stamina}` (需要 `{stamina_cost}` 點)\n\n💡 請食用食物或等待體力恢復，才能繼續冒險！",
-            color=discord.Color.orange()
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        return
 
-    # 4. 扣除體力並更新至資料庫
-    new_stamina = stamina - stamina_cost
-    cursor.execute("UPDATE players SET stamina = ? WHERE user_id = ?", (new_stamina, user_id))
-    conn.commit()
-    cursor.close()
-    conn.close()
-    
         # ⚔️ 25% 機率在冒險途中突發遭遇野生怪物！
         encounter_ambush = random.random() < 0.25
         if encounter_ambush:
+            # 🌟 改在這裡進行區域導入，避開頂層循環載入問題
+            from cogs.battle import BattleChoiceView
+
             monster_names = ["廢土伏擊者", "迷路防禦機械", "暴走掠奪者"]
             monster_name = random.choice(monster_names)
             monster_hp = random.randint(30, 60)
@@ -100,27 +84,26 @@ hp -= monster_dmg
             embed.add_field(name="⚔️ 攻擊力", value=f"`{monster_atk}` ATK", inline=True)
             embed.set_footer(text="💡 擊敗突發敵人有更高的寶箱掉落機會！60秒未操作將自動過期。")
 
-            # 呼叫 BattleChoiceView，並將訊息物件綁定給 view.message 以支援超時機制
             view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk, is_adventure_ambush=True)
-            sent_message = await interaction.followup.send(embed=embed, view=view, wait=True)
+            sent_message = await interaction.followup.send(embed=embed, view=view)
             view.message = sent_message
             return
 
         # 🎒 平安搜刮邏輯
         found_gold = random.randint(5, 15)
-        
+
         # 冒險獲得寶箱的機率 (10%)
         got_chest = random.random() < 0.1
         if got_chest:
             found_item = "神秘寶箱"
         else:
             found_item = random.choice(["生命藥水", "急救包", "鐵劍碎片"])
-        
+
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, found_item))
         item_row = cursor.fetchone()
-        
+
         if item_row:
             cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, found_item))
         else:
@@ -136,7 +119,7 @@ hp -= monster_dmg
             embed.add_field(name="🎁 驚喜發現", value="**✨ 神秘寶箱 x 1**（極低機率幸運獲得！）", inline=True)
         else:
             embed.add_field(name="📦 獲得道具", value=f"**{found_item}** x `1`", inline=True)
-            
+
         embed.add_field(name="💰 獲得金幣", value=f"**+{found_gold} G**", inline=True)
         await interaction.followup.send(embed=embed)
 
