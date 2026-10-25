@@ -14,10 +14,11 @@ class Adventure(commands.Cog):
         await interaction.response.defer()
         user_id = interaction.user.id
 
+        # 1. 從資料庫取得玩家的當前血量與體力
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT role, hp, max_hp, gold FROM players WHERE user_id = ?", (user_id,))
-        player = cursor.fetchone()
+        cursor.execute("SELECT hp, max_hp, stamina, max_stamina FROM players WHERE user_id = ?", (user_id,))
+        player_data = cursor.fetchone()
 
         if not player or not player[0]:
             cursor.close()
@@ -25,42 +26,62 @@ class Adventure(commands.Cog):
             await interaction.followup.send("⚠️ 你尚未選擇身份！請先使用 `/setup_roles` 選擇職業。", ephemeral=True)
             return
 
-        role_name, hp, max_hp, gold = player
+        role_name, hp, max_hp, stamina, max_stamina = player
 
         # 假設這是怪物反擊扣血的邏輯
 hp -= monster_dmg
 
 # 📌 關鍵：在扣完血的「當下」立刻檢查並即時觸發送醫
-if hp <= 0:
-    new_hp = 50  # 診所急救恢復的血量
+        if hp <= 0:
+            new_hp = 50  # 診所急救恢復的血量
     
-    # 1. 立即更新資料庫，將血量補回 50，避免留在 0
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, interaction.user.id))
+            # 1. 立即更新資料庫，將血量補回 50，避免留在 0
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, interaction.user.id))
+            conn.commit()
+            cursor.close()
+            conn.close()
+
+            # 2. 停用戰鬥介面的按鈕
+            for child in self.children:
+            child.disabled = True
+        
+            # 3. 發送即時的診所敗北訊息
+            embed = discord.Embed(
+            title="🏥 【新手村診所・緊急送醫】",
+            description=f"**{self.monster_name}** 反擊造成了 `{monster_dmg}` 點傷害。\n你體力不支倒地，已被緊急送往新手村診所治療！\n❤️ 當前血量已恢復至：`{new_hp}`",
+            color=discord.Color.red()
+            )
+    
+            if self.message:
+                await self.message.edit(embed=embed, view=self)
+            else:
+                await interaction.followup.send(embed=embed, ephemeral=True)
+        
+            self.stop()
+            return
+
+# 3. 🌟 新增：檢查體力是否足夠（例如每次探索消耗 15 點體力）
+    stamina_cost = 15
+    if stamina < stamina_cost:
+        cursor.close()
+        conn.close()
+        embed = discord.Embed(
+            title="⚡ 【體力耗盡】",
+            description=f"你的體力不足以支撐這次探索！\n當前體力：`{stamina}/{max_stamina}` (需要 `{stamina_cost}` 點)\n\n💡 請食用食物或等待體力恢復，才能繼續冒險！",
+            color=discord.Color.orange()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+
+    # 4. 扣除體力並更新至資料庫
+    new_stamina = stamina - stamina_cost
+    cursor.execute("UPDATE players SET stamina = ? WHERE user_id = ?", (new_stamina, user_id))
     conn.commit()
     cursor.close()
     conn.close()
-
-    # 2. 停用戰鬥介面的按鈕
-    for child in self.children:
-        child.disabled = True
-        
-    # 3. 發送即時的診所敗北訊息
-    embed = discord.Embed(
-        title="🏥 【新手村診所・緊急送醫】",
-        description=f"**{self.monster_name}** 反擊造成了 `{monster_dmg}` 點傷害。\n你體力不支倒地，已被緊急送往新手村診所治療！\n❤️ 當前血量已恢復至：`{new_hp}`",
-        color=discord.Color.red()
-    )
     
-    if self.message:
-        await self.message.edit(embed=embed, view=self)
-    else:
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        
-    self.stop()
-    return
-
         # ⚔️ 25% 機率在冒險途中突發遭遇野生怪物！
         encounter_ambush = random.random() < 0.25
         if encounter_ambush:
