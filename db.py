@@ -797,3 +797,56 @@ def buy_market_item(buyer_id: int, listing_id: int):
     cursor.close()
     conn.close()
     return True, f"🎉 成功向玩家購買了 `{item_name}` x{quantity}，花費 `{price} G`！"
+# 🚀 集中初始化所有資料庫表格，確保絕不漏建
+def init_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 1. 玩家資料表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS players (
+            user_id INTEGER PRIMARY KEY,
+            role_name TEXT,
+            hp INTEGER,
+            max_hp INTEGER,
+            mp INTEGER,
+            max_mp INTEGER,
+            stamina INTEGER,
+            max_stamina INTEGER,
+            atk INTEGER,
+            def INTEGER,
+            gold INTEGER DEFAULT 30,
+            weapon_name TEXT,
+            weapon_atk INTEGER DEFAULT 0,
+            armor_name TEXT,
+            armor_def INTEGER DEFAULT 0
+        )
+    """)
+
+    # 2. 背包資料表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS inventory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            item_name TEXT,
+            quantity INTEGER
+        )
+    """)
+
+    # 3. 玩家市場資料表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS market_listings (
+            listing_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            seller_id INTEGER,
+            item_name TEXT,
+            price INTEGER,
+            quantity INTEGER
+        )
+    """)
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+# 程式啟動時自動執行初始化
+init_db()
