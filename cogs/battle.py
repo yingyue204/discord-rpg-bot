@@ -137,21 +137,39 @@ class BattleChoiceView(discord.ui.View):
             cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (hp, self.user_id))
             conn.commit()
 
-            # 4. 檢查玩家是否倒地
-            if hp <= 0:
-                for child in self.children:
-                    child.disabled = True
-                embed = discord.Embed(
-                    title="💀 【戰鬥失敗】",
-                    description=f"{action_desc}\n\n**{self.monster_name}** 反擊造成了 `{monster_dmg}` 點傷害。\n你體力不支倒地了！已被送往診所治療。",
-                    color=discord.Color.red()
-                )
-                if self.message:
-                    await self.message.edit(embed=embed, view=self)
-                else:
-                    await interaction.followup.send(embed=embed)
-                self.stop()
-                return
+            # 假設這是怪物反擊扣血的邏輯
+hp -= monster_dmg
+
+# 📌 關鍵：在扣完血的「當下」立刻檢查並即時觸發送醫
+if hp <= 0:
+    new_hp = 50  # 診所急救恢復的血量
+    
+    # 1. 立即更新資料庫，將血量補回 50，避免留在 0
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, interaction.user.id))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    # 2. 停用戰鬥介面的按鈕
+    for child in self.children:
+        child.disabled = True
+        
+    # 3. 發送即時的診所敗北訊息
+    embed = discord.Embed(
+        title="🏥 【新手村診所・緊急送醫】",
+        description=f"**{self.monster_name}** 反擊造成了 `{monster_dmg}` 點傷害。\n你體力不支倒地，已被緊急送往新手村診所治療！\n❤️ 當前血量已恢復至：`{new_hp}`",
+        color=discord.Color.red()
+    )
+    
+    if self.message:
+        await self.message.edit(embed=embed, view=self)
+    else:
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+    self.stop()
+    return
 
             # 5. 更新戰鬥面板
             embed = discord.Embed(

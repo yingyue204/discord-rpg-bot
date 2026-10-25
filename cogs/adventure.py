@@ -27,21 +27,39 @@ class Adventure(commands.Cog):
 
         role_name, hp, max_hp, gold = player
 
-        # 🏥 檢查倒地狀態
-        if hp <= 0:
-            new_hp = min(max_hp, 50)
-            cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, user_id))
-            conn.commit()
-            cursor.close()
-            conn.close()
+        # 假設這是怪物反擊扣血的邏輯
+hp -= monster_dmg
 
-            embed = discord.Embed(title="🏥 【新手村診所】", color=discord.Color.blue())
-            embed.description = f"你處於倒地狀態無法冒險！已被熱心特務送至診所急救。\n❤️ 當前血量：`{new_hp}/{max_hp}`"
-            await interaction.followup.send(embed=embed)
-            return
+# 📌 關鍵：在扣完血的「當下」立刻檢查並即時觸發送醫
+if hp <= 0:
+    new_hp = 50  # 診所急救恢復的血量
+    
+    # 1. 立即更新資料庫，將血量補回 50，避免留在 0
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, interaction.user.id))
+    conn.commit()
+    cursor.close()
+    conn.close()
 
-        cursor.close()
-        conn.close()
+    # 2. 停用戰鬥介面的按鈕
+    for child in self.children:
+        child.disabled = True
+        
+    # 3. 發送即時的診所敗北訊息
+    embed = discord.Embed(
+        title="🏥 【新手村診所・緊急送醫】",
+        description=f"**{self.monster_name}** 反擊造成了 `{monster_dmg}` 點傷害。\n你體力不支倒地，已被緊急送往新手村診所治療！\n❤️ 當前血量已恢復至：`{new_hp}`",
+        color=discord.Color.red()
+    )
+    
+    if self.message:
+        await self.message.edit(embed=embed, view=self)
+    else:
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+    self.stop()
+    return
 
         # ⚔️ 25% 機率在冒險途中突發遭遇野生怪物！
         encounter_ambush = random.random() < 0.25
