@@ -47,6 +47,24 @@ class ClassSelect(discord.ui.Select):
         conn = get_db_connection()
         cursor = conn.cursor()
 
+        # 安全防護：確保 players 表格及所有欄位存在
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS players (
+                user_id INTEGER PRIMARY KEY,
+                role TEXT,
+                hp INTEGER,
+                max_hp INTEGER,
+                mp INTEGER,
+                max_mp INTEGER,
+                stamina INTEGER,
+                max_stamina INTEGER,
+                atk INTEGER,
+                def INTEGER,
+                gold INTEGER DEFAULT 30
+            )
+        """)
+        conn.commit()
+
         # 1. 檢查玩家是否已經選過職業
         cursor.execute("SELECT role FROM players WHERE user_id = ?", (user_id,))
         player = cursor.fetchone()
@@ -57,7 +75,7 @@ class ClassSelect(discord.ui.Select):
             await interaction.followup.send(f"⚠️ 你已經綁定職業 **【{player[0]}】**，無法重複選擇或更換！", ephemeral=True)
             return
 
-        # 2. 寫入/更新玩家職業與基礎數值（同時帶入 mp 與 max_mp）
+        # 2. 寫入/更新玩家職業與基礎數值
         role_info = CLASSES_DATA[selected_role]
         cursor.execute("""
             INSERT INTO players (user_id, role, hp, max_hp, mp, max_mp, stamina, max_stamina, atk, def, gold)
@@ -68,14 +86,14 @@ class ClassSelect(discord.ui.Select):
                 max_hp = excluded.max_hp,
                 mp = excluded.mp,
                 max_mp = excluded.max_mp,
-                stamina= excluded.stamina,
-                max_stamina= excluded.max_stamina,
+                stamina = excluded.stamina,
+                max_stamina = excluded.max_stamina,
                 atk = excluded.atk,
                 def = excluded.def
         """, (
             user_id, selected_role, 
             role_info["hp"], role_info["max_hp"], 
-            role_info["mp"], role_info["max_mp"],  # 將 mp 與 max_mp 同步設定為職業初始值
+            role_info["mp"], role_info["max_mp"],
             role_info["stamina"], role_info["max_stamina"],
             role_info["atk"], role_info["def"]
         ))
@@ -84,13 +102,14 @@ class ClassSelect(discord.ui.Select):
         cursor.close()
         conn.close()
 
-        # 3. 給予 Discord 身份組
-        role_obj = discord.utils.get(interaction.guild.roles, name=selected_role)
-        if role_obj:
-            try:
-                await interaction.user.add_roles(role_obj)
-            except discord.Forbidden:
-                pass
+        # 3. 給予 Discord 身份組（加入安全防護避免權限報錯）
+        if interaction.guild:
+            role_obj = discord.utils.get(interaction.guild.roles, name=selected_role)
+            if role_obj and isinstance(interaction.user, discord.Member):
+                try:
+                    await interaction.user.add_roles(role_obj)
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
 
         embed = discord.Embed(
             title="🎉 【職業選擇成功】",
@@ -98,7 +117,7 @@ class ClassSelect(discord.ui.Select):
             color=discord.Color.green()
         )
         embed.add_field(name="❤️ 生命值", value=f"`{role_info['hp']}/{role_info['max_hp']}`", inline=True)
-        embed.add_field(name="💧 魔力值", value=f"`{role_info['mp']}/{role_info['mp']}`", inline=True)
+        embed.add_field(name="💧 魔力值", value=f"`{role_info['mp']}/{role_info['max_mp']}`", inline=True)
         embed.add_field(name="⚔️ 攻擊力", value=f"`{role_info['atk']}`", inline=True)
         embed.add_field(name="🛡️ 防禦力", value=f"`{role_info['def']}`", inline=True)
         embed.add_field(name="⚡ 體力值", value=f"`{role_info['stamina']}/{role_info['max_stamina']}`", inline=True)
@@ -106,7 +125,7 @@ class ClassSelect(discord.ui.Select):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 class ClassSelectView(discord.ui.View):
-    def __init__(self, bot=None):
+    def __init__(self):
         super().__init__(timeout=None)
         self.add_item(ClassSelect())
 
