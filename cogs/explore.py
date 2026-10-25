@@ -69,87 +69,73 @@ class Explore(commands.Cog):
     ])
     @app_commands.describe(location="你想前往的冒險區域")
     async def explore(self, interaction: discord.Interaction, location: str):
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
 
-        # 1. 從資料庫取得玩家的當前血量與體力
+        # 1. 從資料庫取得玩家的職業、血量與體力
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT hp, max_hp, stamina, max_stamina FROM players WHERE user_id = ?", (user_id,))
+        cursor.execute("SELECT role_name, hp, max_hp, stamina, max_stamina FROM players WHERE user_id = ?", (user_id,))
         player_data = cursor.fetchone()
 
-        if not player or not player[0]:
+        if not player_data:
             cursor.close()
             conn.close()
             await interaction.followup.send("⚠️ 你尚未選擇身份！請先使用 `/setup_roles` 選擇職業。", ephemeral=True)
             return
 
-        role_name, hp, max_hp, stamina, max_stamina = player
+        role_name, hp, max_hp, stamina, max_stamina = player_data
 
-        # 假設這是怪物反擊扣血的邏輯
-hp -= monster_dmg
+        # 2. 🏥 檢查玩家是否處於血量歸零／倒地狀態（直接送診所）
+        if hp <= 0:
+            new_hp = 50  # 診所急救恢復的血量
+            cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, user_id))
+            conn.commit()
+            cursor.close()
+            conn.close()
 
-# 📌 關鍵：在扣完血的「當下」立刻檢查並即時觸發送醫
-if hp <= 0:
-    new_hp = 50  # 診所急救恢復的血量
-    
-    # 1. 立即更新資料庫，將血量補回 50，避免留在 0
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, interaction.user.id))
-    conn.commit()
-    cursor.close()
-    conn.close()
+            embed = discord.Embed(
+                title="🏥 【新手村診所·緊急送醫】",
+                description=f"你目前處於倒地狀態，無法進行冒險！已被緊急送往新手村診所治療。\n💖 當前血量已恢復至：`{new_hp}` / `{max_hp}`",
+                color=discord.Color.red()
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
 
-    # 2. 停用戰鬥介面的按鈕
-    for child in self.children:
-        child.disabled = True
-        
-    # 3. 發送即時的診所敗北訊息
-    embed = discord.Embed(
-        title="🏥 【新手村診所・緊急送醫】",
-        description=f"**{self.monster_name}** 反擊造成了 `{monster_dmg}` 點傷害。\n你體力不支倒地，已被緊急送往新手村診所治療！\n❤️ 當前血量已恢復至：`{new_hp}`",
-        color=discord.Color.red()
-    )
-    
-    if self.message:
-        await self.message.edit(embed=embed, view=self)
-    else:
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        
-    self.stop()
-    return
+        # 3. ⚡ 檢查體力是否足夠（每次探索消耗 15 點體力）
+        stamina_cost = 15
+        if stamina < stamina_cost:
+            cursor.close()
+            conn.close()
+            embed = discord.Embed(
+                title="⚡ 【體力耗盡】",
+                description=f"你的體力不足以支撐這次探索！\n當前體力：`{stamina}/{max_stamina}` (需要 `{stamina_cost}` 點)\n\n💡 請食用食物或等待體力恢復，才能繼續冒險！",
+                color=discord.Color.orange()
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
 
-    # 3. 🌟 新增：檢查體力是否足夠（例如每次探索消耗 15 點體力）
-    stamina_cost = 15
-    if stamina < stamina_cost:
-        cursor.close()
-        conn.close()
-        embed = discord.Embed(
-            title="⚡ 【體力耗盡】",
-            description=f"你的體力不足以支撐這次探索！\n當前體力：`{stamina}/{max_stamina}` (需要 `{stamina_cost}` 點)\n\n💡 請食用食物或等待體力恢復，才能繼續冒險！",
-            color=discord.Color.orange()
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        return
-
-    # 4. 扣除體力並更新至資料庫
-    new_stamina = stamina - stamina_cost
-    cursor.execute("UPDATE players SET stamina = ? WHERE user_id = ?", (new_stamina, user_id))
-    conn.commit()
-    cursor.close()
-    conn.close()
+        # 4. 扣除體力並更新至資料庫
+        new_stamina = stamina - stamina_cost
+        cursor.execute("UPDATE players SET stamina = ? WHERE user_id = ?", (new_stamina, user_id))
+        conn.commit()
 
         # 取得該地圖的設定
-        map_info = MAP_DATA[location]
+        map_info = MAP_DATA.get(location, MAP_DATA["新手廢墟"])
 
         # ⚔️ 依據地圖機率判定是否遭遇怪物伏擊
         if random.random() < map_info["monster_chance"]:
+            # 區域導入 BattleChoiceView 避免循環引用
+            from cogs.battle import BattleChoiceView
+
             monster_name = random.choice(map_info["monsters"])
             # 根據不同地圖調整怪物強弱
             stat_multiplier = 1.0 if location == "新手廢墟" else (1.5 if location == "廢棄實驗室" else 2.2)
             monster_hp = int(random.randint(30, 50) * stat_multiplier)
             monster_atk = int(random.randint(8, 15) * stat_multiplier)
+
+            cursor.close()
+            conn.close()
 
             embed = discord.Embed(
                 title=f"⚡ 【{location}】遭遇敵人伏擊！",
@@ -162,7 +148,7 @@ if hp <= 0:
             embed.set_footer(text="💡 擊敗強敵可以獲得更豐富的戰利品獎勵！60秒未操作將自動過期。")
 
             view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk, is_adventure_ambush=True)
-            sent_message = await interaction.followup.send(embed=embed, view=view, wait=True)
+            sent_message = await interaction.followup.send(embed=embed, view=view)
             view.message = sent_message
             return
 

@@ -27,6 +27,9 @@ class Adventure(commands.Cog):
 
         hp, max_hp, stamina, max_stamina = player_data
 
+        # 假設這是怪物反擊扣血的邏輯
+        hp -= monster_dmg
+
         # 2. 🏥 檢查玩家是否處於血量歸零／倒地狀態（直接送診所）
         if hp <= 0:
             new_hp = 50  # 診所急救恢復的血量

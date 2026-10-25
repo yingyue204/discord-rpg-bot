@@ -138,36 +138,32 @@ class BattleChoiceView(discord.ui.View):
             cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (hp, self.user_id))
             conn.commit()
 
-# 📌 關鍵：在扣完血的「當下」立刻檢查並即時觸發送醫
-if hp <= 0:
-    new_hp = 50  # 診所急救恢復的血量
-    
-    # 1. 立即更新資料庫，將血量補回 50，避免留在 0
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, interaction.user.id))
-    conn.commit()
-    cursor.close()
-    conn.close()
+            # 🏥 【當下送醫機制檢查】
+            if hp <= 0:
+                new_hp = 50  # 診所急救恢復的血量
+            
+                # 立即更新資料庫，將血量補回 50，避免留在 0
+                cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, self.user_id))
+                conn.commit()
 
-    # 2. 停用戰鬥介面的按鈕
-    for child in self.children:
-        child.disabled = True
-        
-    # 3. 發送即時的診所敗北訊息
-    embed = discord.Embed(
-        title="🏥 【新手村診所・緊急送醫】",
-        description=f"**{self.monster_name}** 反擊造成了 `{monster_dmg}` 點傷害。\n你體力不支倒地，已被緊急送往新手村診所治療！\n❤️ 當前血量已恢復至：`{new_hp}`",
-        color=discord.Color.red()
-    )
-    
-    if self.message:
-        await self.message.edit(embed=embed, view=self)
-    else:
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        
-    self.stop()
-    return
+                # 停用戰鬥介面的按鈕
+                for child in self.children:
+                    child.disabled = True
+
+                # 發送即時的診所敗北訊息
+                embed = discord.Embed(
+                    title="🏥 【新手村診所·緊急送醫】",
+                    description=f"**{self.monster_name}** 反擊造成了 `{monster_dmg}` 點傷害。\n你體力不支倒地，已被緊急送往新手村診所治療！\n💖 當前血量已恢復至：`{new_hp}`",
+                    color=discord.Color.red()
+                )
+            
+                if self.message:
+                    await self.message.edit(embed=embed, view=self)
+                else:
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                
+                self.stop()
+                return
 
             # 5. 更新戰鬥面板
             embed = discord.Embed(

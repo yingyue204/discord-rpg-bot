@@ -39,7 +39,7 @@ class SellerSelect(discord.ui.Select):
             color=discord.Color.gold()
         )
         for listing_id, item_name, price, qty in items:
-            embed.add_field(name=item_name, value=具備數量: `{qty}` | 售價: `{price} G`, inline=False)
+            embed.add_field(name=item_name, value=f"具備數量: `{qty}` | 售價: `{price} G`", inline=False)
             
         await interaction.response.edit_message(embed=embed, view=view)
 
@@ -73,7 +73,8 @@ class PlayerStoreView(discord.ui.View):
         self.seller_id = seller_id
         self.add_item(ItemBuySelect(items))
         
-    @discord.ui.Button(label="⬅️ 返回商店大廳", style=discord.ButtonStyle.secondary)
+    # 修正：使用小寫的 discord.ui.button
+    @discord.ui.button(label="⬅️ 返回商店大廳", style=discord.ButtonStyle.secondary)
     async def back_to_lobby(self, interaction: discord.Interaction, button: discord.ui.Button):
         sellers = get_active_sellers(interaction.user.id)
         view = MarketMainView(interaction.user.id)
@@ -93,9 +94,9 @@ class MarketMainView(discord.ui.View):
         sellers = get_active_sellers(user_id)
         self.add_item(SellerSelect(sellers))
 
-    @discord.ui.Button(label="🏷️ 我要上架商品", style=discord.ButtonStyle.success, row=1)
+    # 修正：使用小寫的 discord.ui.button
+    @discord.ui.button(label="🏷️ 我要上架商品", style=discord.ButtonStyle.success, row=1)
     async def list_item_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # 這裡可以引導玩家使用指令上架，或者跳出 Modal 填寫
         await interaction.response.send_message("💡 請使用指令 `/market sell <道具名稱> <價格> <數量>` 來將道具上架至市場！", ephemeral=True)
 
 class Market(commands.Cog):
