@@ -193,7 +193,7 @@ class Battle(commands.Cog):
 
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT role, hp, max_hp FROM players WHERE user_id = ?", (user_id,))
+        cursor.execute("SELECT role_name, hp, max_hp FROM players WHERE user_id = ?", (user_id,))
         player = cursor.fetchone()
         cursor.close()
         conn.close()
