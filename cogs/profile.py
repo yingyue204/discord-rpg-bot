@@ -14,9 +14,26 @@ class Status(commands.Cog):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # 🔍 查詢玩家資料，完整包含裝備名稱與加成數值
+        # 🛡️ 自動補上可能缺少的欄位，防止舊資料庫報錯
+        columns_to_check = [
+            ("role_name", "TEXT"),
+            ("mp", "INTEGER DEFAULT 50"),
+            ("max_mp", "INTEGER DEFAULT 50"),
+            ("weapon_name", "TEXT"),
+            ("weapon_atk", "INTEGER DEFAULT 0"),
+            ("armor_name", "TEXT"),
+            ("armor_def", "INTEGER DEFAULT 0")
+        ]
+        for col_name, col_type in columns_to_check:
+            try:
+                cursor.execute(f"ALTER TABLE players ADD COLUMN {col_name} {col_type};")
+            except Exception:
+                pass
+        conn.commit()
+
+        # 🔍 查詢玩家資料（包含 max_mp）
         cursor.execute("""
-            SELECT role, hp, max_hp, atk, def, mp, stamina, max_stamina, gold, 
+            SELECT role_name, hp, max_hp, atk, def, mp, max_mp, stamina, max_stamina, gold, 
                    weapon_name, weapon_atk, armor_name, armor_def 
             FROM players WHERE user_id = ?
         """, (interaction.user.id,))
@@ -28,7 +45,7 @@ class Status(commands.Cog):
             await interaction.followup.send("⚠️ 你尚未選擇身份！請先使用 `/setup_roles` 面板選擇職業。", ephemeral=True)
             return
 
-        role_name, hp, max_hp, atk, player_def, mp, stamina, max_stamina, gold, weapon_name, weapon_atk, armor_name, armor_def = player
+        role_name, hp, max_hp, atk, player_def, mp, max_mp, stamina, max_stamina, gold, weapon_name, weapon_atk, armor_name, armor_def = player
         cursor.close()
         conn.close()
 
@@ -43,7 +60,7 @@ class Status(commands.Cog):
         )
         embed.add_field(name="🏷️ 當前職業", value=f"**{role_name}**", inline=False)
         embed.add_field(name="❤️ 生命值", value=f"{hp}/{max_hp}", inline=True)
-        embed.add_field(name="💧 魔力值", value=f"{mp}", inline=True)
+        embed.add_field(name="💧 魔力值", value=f"{mp}/{max_mp}", inline=True)
         embed.add_field(name="⚡ 體力值", value=f"{stamina}/{max_stamina}", inline=True)
         embed.add_field(name="💰 金幣", value=f"{gold} G", inline=True)
         

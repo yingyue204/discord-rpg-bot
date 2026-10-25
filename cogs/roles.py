@@ -8,22 +8,22 @@ import traceback
 CLASSES_DATA = {
     "駭客": {
         "description": "擅長系統干擾與遠程支援，具備高額單體輸出與輔助能力。",
-        "hp": 90, "max_hp": 90, "mp": 80, "stamina": 100, "max_stamina": 100, "atk": 18, "def": 4,
+        "hp": 90, "max_hp": 90, "mp": 80, "max_mp": 80, "stamina": 100, "max_stamina": 100, "atk": 18, "def": 4,
         "emoji": "💻"
     },
     "磁暴重裝": {
         "description": "擁有極高的血量與防禦力，前線堅不可摧的重型坦克。",
-        "hp": 150, "max_hp": 150, "mp": 30, "stamina": 100, "max_stamina": 100, "atk": 10, "def": 12,
+        "hp": 150, "max_hp": 150, "mp": 30, "max_mp": 30, "stamina": 100, "max_stamina": 100, "atk": 10, "def": 12,
         "emoji": "🛡️"
     },
     "異能覺醒": {
         "description": "掌控元素與精神能量，擁有龐大的魔力與毀滅性範圍傷害。",
-        "hp": 80, "max_hp": 80, "mp": 120, "stamina": 100, "max_stamina": 100, "atk": 22, "def": 3,
+        "hp": 80, "max_hp": 80, "mp": 120, "max_mp": 120, "stamina": 100, "max_stamina": 100, "atk": 22, "def": 3,
         "emoji": "🔮"
     },
     "神射手": {
         "description": "精準的遠距離打擊者，擁有優秀的平衡輸出與高暴擊潛力。",
-        "hp": 100, "max_hp": 100, "mp": 50, "stamina": 100, "max_stamina": 100, "atk": 16, "def": 6,
+        "hp": 100, "max_hp": 100, "mp": 50, "max_mp": 50, "stamina": 100, "max_stamina": 100, "atk": 16, "def": 6,
         "emoji": "🏹"
     }
 }
@@ -50,7 +50,7 @@ class ClassSelect(discord.ui.Select):
             conn = get_db_connection()
             cursor = conn.cursor()
 
-            # 確保資料表存在，且欄位統一使用 role_name
+            # 1. 確保基礎資料表存在
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS players (
                     user_id INTEGER PRIMARY KEY,
@@ -66,9 +66,27 @@ class ClassSelect(discord.ui.Select):
                     gold INTEGER DEFAULT 30
                 )
             """)
+
+            # 2. 自動為舊資料庫補上可能缺少的欄位
+            columns_to_check = [
+                ("role_name", "TEXT"),
+                ("mp", "INTEGER DEFAULT 50"),
+                ("max_mp", "INTEGER DEFAULT 50"),
+                ("stamina", "INTEGER DEFAULT 100"),
+                ("max_stamina", "INTEGER DEFAULT 100"),
+                ("atk", "INTEGER DEFAULT 10"),
+                ("def", "INTEGER DEFAULT 5"),
+                ("gold", "INTEGER DEFAULT 30")
+            ]
+            for col_name, col_type in columns_to_check:
+                try:
+                    cursor.execute(f"ALTER TABLE players ADD COLUMN {col_name} {col_type};")
+                except Exception:
+                    pass
+
             conn.commit()
 
-            # 1. 檢查玩家是否已經選過職業
+            # 3. 檢查玩家是否已經選過職業
             cursor.execute("SELECT role_name FROM players WHERE user_id = ?", (user_id,))
             player = cursor.fetchone()
 
@@ -78,7 +96,7 @@ class ClassSelect(discord.ui.Select):
                 await interaction.followup.send(f"⚠️ 你已經綁定職業 **【{player[0]}】**，無法重複選擇或更換！", ephemeral=True)
                 return
 
-            # 2. 寫入/更新玩家職業與基礎數值 (使用 role_name)
+            # 4. 寫入/更新玩家職業與基礎數值
             role_info = CLASSES_DATA[selected_role]
             cursor.execute("""
                 INSERT INTO players (user_id, role_name, hp, max_hp, mp, max_mp, stamina, max_stamina, atk, def, gold)
@@ -105,7 +123,7 @@ class ClassSelect(discord.ui.Select):
             cursor.close()
             conn.close()
 
-            # 3. 給予 Discord 身份組
+            # 5. 給予 Discord 身份組
             if interaction.guild and isinstance(interaction.user, discord.Member):
                 role_obj = discord.utils.get(interaction.guild.roles, name=selected_role)
                 if role_obj:
@@ -128,7 +146,6 @@ class ClassSelect(discord.ui.Select):
             await interaction.followup.send(embed=embed, ephemeral=True)
 
         except Exception as e:
-            # 如果發生任何未預期的錯誤，會在後台印出詳細 traceback，並通知使用者
             traceback.print_exc()
             try:
                 await interaction.followup.send(f"❌ 發生系統錯誤：`{e}`", ephemeral=True)
