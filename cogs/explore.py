@@ -72,10 +72,11 @@ class Explore(commands.Cog):
         await interaction.response.defer()
         user_id = interaction.user.id
 
+        # 1. 從資料庫取得玩家的當前血量與體力
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT role, hp, max_hp FROM players WHERE user_id = ?", (user_id,))
-        player = cursor.fetchone()
+        cursor.execute("SELECT hp, max_hp, stamina, max_stamina FROM players WHERE user_id = ?", (user_id,))
+        player_data = cursor.fetchone()
 
         if not player or not player[0]:
             cursor.close()
@@ -83,7 +84,7 @@ class Explore(commands.Cog):
             await interaction.followup.send("⚠️ 你尚未選擇身份！請先使用 `/setup_roles` 選擇職業。", ephemeral=True)
             return
 
-        role_name, hp, max_hp = player
+        role_name, hp, max_hp, stamina, max_stamina = player
 
         # 假設這是怪物反擊扣血的邏輯
 hp -= monster_dmg
@@ -118,6 +119,26 @@ if hp <= 0:
         
     self.stop()
     return
+
+    # 3. 🌟 新增：檢查體力是否足夠（例如每次探索消耗 15 點體力）
+    stamina_cost = 15
+    if stamina < stamina_cost:
+        cursor.close()
+        conn.close()
+        embed = discord.Embed(
+            title="⚡ 【體力耗盡】",
+            description=f"你的體力不足以支撐這次探索！\n當前體力：`{stamina}/{max_stamina}` (需要 `{stamina_cost}` 點)\n\n💡 請食用食物或等待體力恢復，才能繼續冒險！",
+            color=discord.Color.orange()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+
+    # 4. 扣除體力並更新至資料庫
+    new_stamina = stamina - stamina_cost
+    cursor.execute("UPDATE players SET stamina = ? WHERE user_id = ?", (new_stamina, user_id))
+    conn.commit()
+    cursor.close()
+    conn.close()
 
         # 取得該地圖的設定
         map_info = MAP_DATA[location]

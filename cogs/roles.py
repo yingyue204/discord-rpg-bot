@@ -7,22 +7,22 @@ from db import get_db_connection
 CLASSES_DATA = {
     "駭客": {
         "description": "擅長系統干擾與遠程支援，具備高額單體輸出與輔助能力。",
-        "hp": 90, "max_hp": 90, "mp": 80, "atk": 18, "def": 4,
+        "hp": 90, "max_hp": 90, "mp": 80, "stamina": 100, "max_stamina": 100, "atk": 18, "def": 4,
         "emoji": "💻"
     },
     "磁暴重裝": {
         "description": "擁有極高的血量與防禦力，前線堅不可摧的重型坦克。",
-        "hp": 150, "max_hp": 150, "mp": 30, "atk": 10, "def": 12,
+        "hp": 150, "max_hp": 150, "mp": 30, "stamina": 100, "max_stamina": 100, "atk": 10, "def": 12,
         "emoji": "🛡️"
     },
     "異能覺醒": {
         "description": "掌控元素與精神能量，擁有龐大的魔力與毀滅性範圍傷害。",
-        "hp": 80, "max_hp": 80, "mp": 120, "atk": 22, "def": 3,
+        "hp": 80, "max_hp": 80, "mp": 120, "stamina": 100, "max_stamina": 100, "atk": 22, "def": 3,
         "emoji": "🔮"
     },
     "神射手": {
         "description": "精準的遠距離打擊者，擁有優秀的平衡輸出與高暴擊潛力。",
-        "hp": 100, "max_hp": 100, "mp": 50, "atk": 16, "def": 6,
+        "hp": 100, "max_hp": 100, "mp": 50, "stamina": 100, "max_stamina": 100, "atk": 16, "def": 6,
         "emoji": "🏹"
     }
 }
@@ -32,7 +32,7 @@ class ClassSelect(discord.ui.Select):
         options = [
             discord.SelectOption(
                 label=role_name,
-                description=f"HP:{data['hp']} | MP:{data['mp']} | ATK:{data['atk']} | DEF:{data['def']}",
+                description=f"HP:{data['hp']} | MP:{data['mp']} | STA:{data['stamina']} | ATK:{data['atk']} | DEF:{data['def']}",
                 emoji=data["emoji"]
             )
             for role_name, data in CLASSES_DATA.items()
@@ -60,20 +60,23 @@ class ClassSelect(discord.ui.Select):
         # 2. 寫入/更新玩家職業與基礎數值（同時帶入 mp 與 max_mp）
         role_info = CLASSES_DATA[selected_role]
         cursor.execute("""
-            INSERT INTO players (user_id, role, hp, max_hp, mp, max_mp, atk, def, gold)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+            INSERT INTO players (user_id, role, hp, max_hp, mp, max_mp, stamina, max_stamina, atk, def, gold)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 30)
             ON CONFLICT(user_id) DO UPDATE SET
                 role = excluded.role,
                 hp = excluded.hp,
                 max_hp = excluded.max_hp,
                 mp = excluded.mp,
                 max_mp = excluded.max_mp,
+                stamina= excluded.stamina,
+                max_stamina= excluded.max_stamina,
                 atk = excluded.atk,
                 def = excluded.def
         """, (
             user_id, selected_role, 
             role_info["hp"], role_info["max_hp"], 
-            role_info["mp"], role_info["mp"],  # 將 mp 與 max_mp 同步設定為職業初始值
+            role_info["mp"], role_info["max_mp"],  # 將 mp 與 max_mp 同步設定為職業初始值
+            role_info["stamina"], role_info["max_stamina"],
             role_info["atk"], role_info["def"]
         ))
 
@@ -98,6 +101,7 @@ class ClassSelect(discord.ui.Select):
         embed.add_field(name="💧 魔力值", value=f"`{role_info['mp']}/{role_info['mp']}`", inline=True)
         embed.add_field(name="⚔️ 攻擊力", value=f"`{role_info['atk']}`", inline=True)
         embed.add_field(name="🛡️ 防禦力", value=f"`{role_info['def']}`", inline=True)
+        embed.add_field(name="⚡ 體力值", value=f"`{role_info['stamina']}/{role_info['max_stamina']}`", inline=True)
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -123,7 +127,7 @@ class Roles(commands.Cog):
             embed.add_field(
                 name=f"{data['emoji']} {role_name}",
                 value=f"• **描述**：{data['description']}\n"
-                      f"• **基礎數值**：HP `{data['hp']}` | MP `{data['mp']}` | ATK `{data['atk']}` | DEF `{data['def']}`",
+                      f"• **基礎數值**：HP `{data['hp']}` | MP `{data['mp']}` | STA `{data['stamina']}` | ATK `{data['atk']}` | DEF `{data['def']}`",
                 inline=False
             )
 

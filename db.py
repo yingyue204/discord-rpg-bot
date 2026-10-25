@@ -707,3 +707,93 @@ def craft_item_in_db(user_id: int, target_item: str):
     finally:
         cursor.close()
         conn.close()
+
+import sqlite3
+
+def init_market_db():
+    conn = sqlite3.connect("game.db") # 請對應你專案的資料庫名稱
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS market_listings (
+            listing_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            seller_id INTEGER,
+            seller_name TEXT,
+            item_name TEXT,
+            price INTEGER,
+            quantity INTEGER
+        )
+    """)
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def get_active_sellers(current_user_id: int):
+    """取得有上架商品、且不是自己的所有賣家清單"""
+    conn = sqlite3.connect("game.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT DISTINCT seller_id, seller_name 
+        FROM market_listings 
+        WHERE seller_id != ?
+    """, (current_user_id,))
+    sellers = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return sellers
+
+def get_listings_by_seller(seller_id: int):
+    """取得特定賣家的所有上架商品"""
+    conn = sqlite3.connect("game.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT listing_id, item_name, price, quantity FROM market_listings WHERE seller_id = ?", (seller_id,))
+    items = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return items
+
+def buy_market_item(buyer_id: int, listing_id: int):
+    """購買玩家市場商品的交易邏輯"""
+    conn = sqlite3.connect("game.db")
+    cursor = conn.cursor()
+    
+    # 1. 取得商品資訊
+    cursor.execute("SELECT seller_id, item_name, price, quantity FROM market_listings WHERE listing_id = ?", (listing_id,))
+    listing = cursor.fetchone()
+    if not listing:
+        conn.close()
+        return False, "❌ 該商品已經被買走或下架了！"
+        
+    seller_id, item_name, price, quantity = listing
+    
+    # 嚴格防洗錢檢查
+    if buyer_id == seller_id:
+        conn.close()
+        return False, "❌ 為了維持市場公平，你不能購買自己的商品！"
+        
+    # 2. 檢查買家金幣
+    cursor.execute("SELECT gold FROM players WHERE user_id = ?", (buyer_id,))
+    buyer_data = cursor.fetchone()
+    if not buyer_data or buyer_data[0] < price:
+        conn.close()
+        return False, f"❌ 你的金幣不足！需要 `{price} G`。"
+        
+    # 3. 扣除買家金幣、增加賣家金幣
+    cursor.execute("UPDATE players SET gold = gold - ? WHERE user_id = ?", (price, buyer_id))
+    cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (price, seller_id))
+    
+    # 4. 將道具加入買家背包 (假設你的背包是用 inventory 表格記錄，根據你的專案結構調整)
+    # 這裡示範簡易的背包新增邏輯：檢查是否有該道具，沒有就新增，有就數量 +1
+    cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (buyer_id, item_name))
+    inv_item = cursor.fetchone()
+    if inv_item:
+        cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (quantity, buyer_id, item_name))
+    else:
+        cursor.execute("INSERT INTO inventory (user_id, item_name, quantity, type) VALUES (?, ?, ?, 'item')", (buyer_id, item_name, quantity))
+        
+    # 5. 刪除市場上的該筆上架
+    cursor.execute("DELETE FROM market_listings WHERE listing_id = ?", (listing_id,))
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return True, f"🎉 成功向玩家購買了 `{item_name}` x{quantity}，花費 `{price} G`！"
