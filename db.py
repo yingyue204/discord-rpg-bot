@@ -7,6 +7,25 @@ def get_db_connection():
     conn.execute("PRAGMA journal_mode=WAL;")
     return conn
 
+def get_player_status(user_id):
+    """取得玩家完整的屬性狀態"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT role_name, level, exp, hp, max_hp, mp, max_mp, stamina, max_stamina, atk, def, gold, weapon_name, weapon_atk, armor_name, armor_def 
+            FROM players 
+            WHERE user_id = ?
+        """, (user_id,))
+        player = cursor.fetchone()
+        return player
+    except Exception as e:
+        print(f"❌ 查詢玩家屬性錯誤: {e}")
+        return None
+    finally:
+        cursor.close()
+        conn.close()
+
 # 初始化資料庫與所有表格
 def init_db():
     conn = get_db_connection()
@@ -873,6 +892,128 @@ def list_market_item(user_id, item_name, price, quantity):
     except Exception as e:
         conn.rollback()
         return False, f"❌ 上架發生錯誤：`{e}`"
+    finally:
+        cursor.close()
+        conn.close()
+
+# 1. 確保 init_db() 裡面有建立 farm_plots 表格
+def init_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+# 4. 玩家農場土地表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS farm_plots (
+            user_id INTEGER,
+            plot_index INTEGER,
+            crop_name TEXT,
+            ready_timestamp REAL,
+            status TEXT DEFAULT 'empty',
+            PRIMARY KEY (user_id, plot_index)
+        )
+    """)
+# ==================== 🌾 農場系統相關函數 ====================
+
+def get_player_farm(user_id):
+    """取得玩家的所有農場狀態（若無資料則自動初始化 3 塊田）"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT COUNT(*) FROM farm_plots WHERE user_id = ?", (user_id,))
+    if cursor.fetchone()[0] == 0:
+        for i in range(1, 4):
+            cursor.execute("""
+                INSERT INTO farm_plots (user_id, plot_index, status) 
+                VALUES (?, ?, 'empty')
+            """, (user_id, i))
+        conn.commit()
+        
+    cursor.execute("SELECT plot_index, crop_name, ready_timestamp, status FROM farm_plots WHERE user_id = ? ORDER BY plot_index", (user_id,))
+    plots = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return plots
+
+def plant_crop(user_id, plot_index, crop_name):
+    """在指定農田種植作物 (生長時間設為 60 秒作示範)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT status FROM farm_plots WHERE user_id = ? AND plot_index = ?", (user_id, plot_index))
+        plot = cursor.fetchone()
+        if not plot:
+            return False, "❌ 找不到這塊農田！"
+        if plot[0] != 'empty':
+            return False, "❌ 這塊農田已經有作物正在生長或已成熟了！"
+            
+        seed_name = f"{crop_name}種子"
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, seed_name))
+        seed = cursor.fetchone()
+        if not seed or seed[0] < 1:
+            return False, f"❌ 你的背包中沒有 **{seed_name}**！"
+            
+        cursor.execute("UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_name = ?", (user_id, seed_name))
+            
+        ready_time = time.time() + 60 
+        cursor.execute("""
+            UPDATE farm_plots 
+            SET crop_name = ?, ready_timestamp = ?, status = 'growing' 
+            WHERE user_id = ? AND plot_index = ?
+        """, (crop_name, ready_time, user_id, plot_index))
+        
+        conn.commit()
+        return True, f"🌱 成功在 **第 {plot_index} 號田** 種下了 **{crop_name}**！預計 1 分鐘後成熟。"
+    except Exception as e:
+        conn.rollback()
+        return False, f"❌ 種植錯誤：`{e}`"
+    finally:
+        cursor.close()
+        conn.close()
+
+def harvest_crop(user_id, plot_index):
+    """收成作物：給予收穫道具，並透過 gain_player_exp 給予種田經驗值"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT crop_name, ready_timestamp, status FROM farm_plots WHERE user_id = ? AND plot_index = ?", (user_id, plot_index))
+        plot = cursor.fetchone()
+        if not plot:
+            return False, "❌ 找不到這塊農田！"
+            
+        crop_name, ready_timestamp, status = plot
+        if status == 'empty':
+            return False, "❌ 這塊田什麼都沒有種！"
+            
+        if status == 'growing':
+            remaining = int(ready_timestamp - time.time())
+            if remaining > 0:
+                return False, f"⏳ 作物還沒成熟！還要等待 `{remaining}` 秒。"
+
+        # 1. 將收穫物放入背包
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, crop_name))
+        inv = cursor.fetchone()
+        if inv:
+            cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, crop_name))
+        else:
+            cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, crop_name))
+            
+        # 2. 清空田地狀態
+        cursor.execute("""
+            UPDATE farm_plots 
+            SET crop_name = NULL, ready_timestamp = NULL, status = 'empty' 
+            WHERE user_id = ? AND plot_index = ?
+        """, (user_id, plot_index))
+        
+        conn.commit()
+        
+        # 3. 呼叫經驗值系統：種田獲得 15 點經驗值
+        success_exp, exp_msg = gain_player_exp(user_id, exp_amount=15)
+        
+        return True, f"🌾 成功收成 **{crop_name}**！\n{exp_msg}"
+        
+    except Exception as e:
+        conn.rollback()
+        return False, f"❌ 收成錯誤：`{e}`"
     finally:
         cursor.close()
         conn.close()
