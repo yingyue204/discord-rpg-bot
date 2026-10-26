@@ -1006,8 +1006,6 @@ def gain_player_exp(user_id: int, exp_amount: int):
         conn.close()
 
 import sqlite3
-
-import sqlite3
 import time
 
 def get_db_connection(db_name="game.db"):

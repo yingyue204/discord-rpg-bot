@@ -263,7 +263,7 @@ class Craft(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="合成", description="使用收集到的素材與金幣合成強力道具或裝備")
-    @app_commands.rename(name="合成目標")
+    @app_commands.rename(item_name="合成目標")
     @app_commands.describe(item_name="你想合成的目標道具名稱")
     async def craft(self, interaction: discord.Interaction, item_name: str):
         await interaction.response.defer(ephemeral=True)
