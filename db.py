@@ -1009,8 +1009,13 @@ import sqlite3
 import time
 
 def get_db_connection(db_name="game.db"):
-    conn = sqlite3.connect(db_name)
+    # 🛡️ 加上 timeout=30.0，避免永久卡死
+    conn = sqlite3.connect(db_name, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    
+    # 🚀 開啟 WAL 模式（Write-Ahead Logging），大幅改善並發讀寫、防止資料庫鎖死
+    conn.execute("PRAGMA journal_mode=WAL;")
+    
     return conn
 
 # ==================== 🛒 商城道具與定價表 ====================
