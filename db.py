@@ -1,11 +1,22 @@
 import sqlite3
 import time
 import random
+from contextlib import contextmanager
 
-def get_db_connection():
-    conn = sqlite3.connect("bot.db", timeout=20)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    return conn
+@contextmanager
+def get_db():
+    conn = sqlite3.connect("game.db")
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        yield cursor
+        conn.commit()  # 成功時自動提交
+    except Exception as e:
+        conn.rollback()  # 發生錯誤時自動回滾
+        raise e
+    finally:
+        cursor.close()
+        conn.close()   # 🔒 不管有沒有報錯，這裡絕對會自動關閉連線！
 
 # ⚔️ 戰鬥勝利的資料庫結算處理
 def process_battle_victory_in_db(user_id: int, gold_reward: int, exp_reward: int, dropped_item: str = None):
@@ -451,55 +462,6 @@ def reset_player_data(user_id: int):
         cursor.execute("DELETE FROM players WHERE user_id = ?", (user_id,))
         cursor.execute("DELETE FROM inventory WHERE user_id = ?", (user_id,))
         conn.commit()
-    finally:
-        cursor.close()
-        conn.close()
-
-# 🛒 商城購買邏輯（支援指定數量）
-def buy_item_in_db(user_id: int, item_name: str, quantity: int):
-    # 定義道具價格表（你可以根據你的商城設計調整價格）
-    shop_prices = {
-        "生命藥水": 50,
-        "急救包": 120,
-        "魔力藥水": 40,
-        "能量飲料": 80,
-        "神秘寶箱": 250
-    }
-
-    if item_name not in shop_prices:
-        return False, f"❌ 商城中找不到 **{item_name}** 這個商品！"
-
-    unit_price = shop_prices[item_name]
-    total_cost = unit_price * quantity
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        # 1. 檢查玩家金幣是否足夠
-        cursor.execute("SELECT gold FROM players WHERE user_id = ?", (user_id,))
-        player = cursor.fetchone()
-        if not player:
-            return False, "❌ 你尚未建立角色！請先使用 `/setup_roles` 選擇職業。"
-        
-        current_gold = player[0] or 0
-        if current_gold < total_cost:
-            return False, f"❌ 金幣不足！購買 `{quantity}` 個 **{item_name}** 需要 `{total_cost} G`（你目前有 `{current_gold} G`）。"
-
-        # 2. 扣除金幣
-        cursor.execute("UPDATE players SET gold = gold - ? WHERE user_id = ?", (total_cost, user_id))
-
-        # 3. 將購買的數量加入背包
-        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
-        existing = cursor.fetchone()
-        
-        if existing:
-            cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (quantity, user_id, item_name))
-        else:
-            cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (user_id, item_name, quantity))
-
-        conn.commit()
-        msg = f"🎉 成功購買 **{item_name}** x `{quantity}`！\n💰 總共花費：`{total_cost} G`（單價：`{unit_price} G`）"
-        return True, msg
     finally:
         cursor.close()
         conn.close()
@@ -1000,127 +962,6 @@ def list_market_item(user_id, item_name, price, quantity):
         cursor.close()
         conn.close()
 
-# 1. 確保 init_db() 裡面有建立 farm_plots 表格
-def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-# 4. 玩家農場土地表
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS farm_plots (
-            user_id INTEGER,
-            plot_index INTEGER,
-            crop_name TEXT,
-            ready_timestamp REAL,
-            status TEXT DEFAULT 'empty',
-            PRIMARY KEY (user_id, plot_index)
-        )
-    """)
-# ==================== 🌾 農場系統相關函數 ====================
-
-def get_player_farm(user_id):
-    """取得玩家的所有農場狀態（若無資料則自動初始化 3 塊田）"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT COUNT(*) FROM farm_plots WHERE user_id = ?", (user_id,))
-    if cursor.fetchone()[0] == 0:
-        for i in range(1, 4):
-            cursor.execute("""
-                INSERT INTO farm_plots (user_id, plot_index, status) 
-                VALUES (?, ?, 'empty')
-            """, (user_id, i))
-        conn.commit()
-        
-    cursor.execute("SELECT plot_index, crop_name, ready_timestamp, status FROM farm_plots WHERE user_id = ? ORDER BY plot_index", (user_id,))
-    plots = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return plots
-
-def plant_crop(user_id, plot_index, crop_name):
-    """在指定農田種植作物 (生長時間設為 60 秒作示範)"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT status FROM farm_plots WHERE user_id = ? AND plot_index = ?", (user_id, plot_index))
-        plot = cursor.fetchone()
-        if not plot:
-            return False, "❌ 找不到這塊農田！"
-        if plot[0] != 'empty':
-            return False, "❌ 這塊農田已經有作物正在生長或已成熟了！"
-            
-        seed_name = f"{crop_name}種子"
-        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, seed_name))
-        seed = cursor.fetchone()
-        if not seed or seed[0] < 1:
-            return False, f"❌ 你的背包中沒有 **{seed_name}**！"
-            
-        cursor.execute("UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_name = ?", (user_id, seed_name))
-            
-        ready_time = time.time() + 60 
-        cursor.execute("""
-            UPDATE farm_plots 
-            SET crop_name = ?, ready_timestamp = ?, status = 'growing' 
-            WHERE user_id = ? AND plot_index = ?
-        """, (crop_name, ready_time, user_id, plot_index))
-        
-        conn.commit()
-        return True, f"🌱 成功在 **第 {plot_index} 號田** 種下了 **{crop_name}**！預計 1 分鐘後成熟。"
-    except Exception as e:
-        conn.rollback()
-        return False, f"❌ 種植錯誤：`{e}`"
-    finally:
-        cursor.close()
-        conn.close()
-
-def harvest_crop(user_id, plot_index):
-    """收成作物：給予收穫道具，並透過 gain_player_exp 給予種田經驗值"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT crop_name, ready_timestamp, status FROM farm_plots WHERE user_id = ? AND plot_index = ?", (user_id, plot_index))
-        plot = cursor.fetchone()
-        if not plot:
-            return False, "❌ 找不到這塊農田！"
-            
-        crop_name, ready_timestamp, status = plot
-        if status == 'empty':
-            return False, "❌ 這塊田什麼都沒有種！"
-            
-        if status == 'growing':
-            remaining = int(ready_timestamp - time.time())
-            if remaining > 0:
-                return False, f"⏳ 作物還沒成熟！還要等待 `{remaining}` 秒。"
-
-        # 1. 將收穫物放入背包
-        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, crop_name))
-        inv = cursor.fetchone()
-        if inv:
-            cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, crop_name))
-        else:
-            cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, crop_name))
-            
-        # 2. 清空田地狀態
-        cursor.execute("""
-            UPDATE farm_plots 
-            SET crop_name = NULL, ready_timestamp = NULL, status = 'empty' 
-            WHERE user_id = ? AND plot_index = ?
-        """, (user_id, plot_index))
-        
-        conn.commit()
-        
-        # 3. 呼叫經驗值系統：種田獲得 15 點經驗值
-        success_exp, exp_msg = gain_player_exp(user_id, exp_amount=15)
-        
-        return True, f"🌾 成功收成 **{crop_name}**！\n{exp_msg}"
-        
-    except Exception as e:
-        conn.rollback()
-        return False, f"❌ 收成錯誤：`{e}`"
-    finally:
-        cursor.close()
-        conn.close()
 
 # 📈 增加玩家經驗值與處理升級邏輯
 def gain_player_exp(user_id: int, exp_amount: int):
@@ -1166,157 +1007,94 @@ def gain_player_exp(user_id: int, exp_amount: int):
 
 import sqlite3
 
+import sqlite3
+import time
+
 def get_db_connection(db_name="game.db"):
     conn = sqlite3.connect(db_name)
     conn.row_factory = sqlite3.Row
     return conn
 
-# 🍳 完整 21 道豪華料理食譜資料庫
-RECIPE_DATABASE = {
-    # --- 1等料理台可製作 ---
-    "義大利麵": {
-        "station_level": 1,
-        "ingredients": {"小麥": 2, "生肉": 1, "蔬菜": 1},
-        "output": "【料理】義大利麵",
-        "description": "經典的西式主食，恢復 40 點生命與 20 點魔力。"
-    },
-    "麵包": {
-        "station_level": 1,
-        "ingredients": {"小麥": 3},
-        "output": "【料理】麵包",
-        "description": "基礎的烘焙食品，恢復 25 點生命。"
-    },
-    "香煎魚": {
-        "station_level": 1,
-        "ingredients": {"鮮魚": 1, "香料": 1},
-        "output": "【料理】香煎魚",
-        "description": "外酥內嫩的鮮魚料理，恢復 35 點生命。"
-    },
-    "壽司": {
-        "station_level": 1,
-        "ingredients": {"米": 2, "鮮魚": 1},
-        "output": "【料理】壽司",
-        "description": "爽口的日式美味，恢復 30 點生命與 15 點魔力。"
-    },
-    "什錦飯": {
-        "station_level": 1,
-        "ingredients": {"米": 2, "生肉": 1, "蔬菜": 2},
-        "output": "【料理】什錦飯",
-        "description": "料多實在的鄉村什錦飯，恢復 50 點生命。"
-    },
-    "熱狗麵包": {
-        "station_level": 1,
-        "ingredients": {"小麥": 2, "生肉": 1},
-        "output": "【料理】熱狗麵包",
-        "description": "方便攜帶的速食點心，恢復 30 點生命。"
-    },
-    "紅燒肉": {
-        "station_level": 1,
-        "ingredients": {"五花肉": 2, "香料": 1},
-        "output": "【料理】紅燒肉",
-        "description": "濃郁誘人的傳統紅燒肉，恢復 60 點生命。"
-    },
-    "包子": {
-        "station_level": 1,
-        "ingredients": {"小麥": 2, "生肉": 1},
-        "output": "【料理】包子",
-        "description": "熱騰騰的肉包，恢復 35 點生命。"
-    },
-    "麵疙瘩": {
-        "station_level": 1,
-        "ingredients": {"小麥": 3, "蔬菜": 1},
-        "output": "【料理】麵疙瘩",
-        "description": "Q彈有嚼勁的家常麵疙瘩，恢復 30 點生命。"
-    },
-    "蔥油餅": {
-        "station_level": 1,
-        "ingredients": {"小麥": 3, "蔥": 2},
-        "output": "【料理】蔥油餅",
-        "description": "香氣四溢的酥脆蔥油餅，恢復 30 點生命。"
-    },
-    "咖哩飯": {
-        "station_level": 1,
-        "ingredients": {"米": 2, "蔬菜": 2, "生肉": 1},
-        "output": "【料理】咖哩飯",
-        "description": "濃郁微辣的經典咖哩，恢復 55 點生命與 20 點魔力。"
-    },
+# ==================== 🛒 商城道具與定價表 ====================
+SHOP_ITEMS = {
+    # 🧪 1. 藥水與補給品類
+    "生命藥水": {"price": 30, "type": "consumable", "description": "基礎治療道具，使用後恢復 30 點生命值。"},
+    "急救包": {"price": 60, "type": "consumable", "description": "高效急救醫療包，使用後恢復 50 點生命值。"},
+    "魔力藥水": {"price": 40, "type": "consumable", "description": "補充精神力的藥劑，使用後恢復 20 點 MP。"},
+    "能量飲料": {"price": 75, "type": "consumable", "description": "高科技提神飲料，使用後瞬間恢復 40 點 MP。"},
 
-    # --- 2等料理台可製作 ---
-    "千層蛋糕": {
-        "station_level": 2,
-        "ingredients": {"小麥": 3, "雞蛋": 2, "牛奶": 2},
-        "output": "【料理】千層蛋糕",
-        "description": "層次豐富的精緻甜點，大幅恢復 60 點魔力。"
-    },
-    "香檳氣泡水": {
-        "station_level": 2,
-        "ingredients": {"水果": 3},
-        "output": "【料理】香檳氣泡水",
-        "description": "清涼解渴的特調氣泡飲，恢復 40 點魔力。"
-    },
-    "泡芙": {
-        "station_level": 2,
-        "ingredients": {"小麥": 2, "雞蛋": 2, "牛奶": 1},
-        "output": "【料理】泡芙",
-        "description": "爆漿口感的甜點，恢復 45 點魔力。"
-    },
-    "燉飯": {
-        "station_level": 2,
-        "ingredients": {"米": 3, "生肉": 1, "蔬菜": 2},
-        "output": "【料理】燉飯",
-        "description": "濃郁香滑的義式燉飯，恢復 70 點生命。"
-    },
-    "舒芙蕾": {
-        "station_level": 2,
-        "ingredients": {"雞蛋": 3, "牛奶": 2},
-        "output": "【料理】舒芙蕾",
-        "description": "入口即化的雲朵蛋糕，恢復 50 點魔力。"
-    },
-    "披薩": {
-        "station_level": 2,
-        "ingredients": {"小麥": 3, "生肉": 2, "蔬菜": 1},
-        "output": "【料理】披薩",
-        "description": "牽絲美味的起司肉餅披薩，恢復 80 點生命。"
-    },
-    "白醬意麵": {
-        "station_level": 2,
-        "ingredients": {"小麥": 2, "牛奶": 2, "生肉": 1},
-        "output": "【料理】白醬意麵",
-        "description": "奶香四溢的白醬義大利麵，恢復 65 點生命與 30 點魔力。"
-    },
-    "東坡肉": {
-        "station_level": 2,
-        "ingredients": {"五花肉": 3, "香料": 2},
-        "output": "【料理】東坡肉",
-        "description": "肥而不膩的頂級東坡肉，恢復 90 點生命。"
-    },
+    # 🎁 2. 特殊道具與寶箱類
+    "神秘寶箱": {"price": 200, "type": "special", "description": "內含各品質武器與防具的神秘寶箱。"},
 
-    # --- 3等料理台可製作 ---
-    "紅酒燉牛肉": {
-        "station_level": 3,
-        "ingredients": {"高級肉塊": 2, "蔬菜": 3, "香料": 1},
-        "output": "【料理】紅酒燉牛肉",
-        "description": "高級主廚料理，極大幅度恢復 120 點生命與 50 點魔力！"
-    },
-    "牛肉麵": {
-        "station_level": 3,
-        "ingredients": {"小麥": 2, "高級肉塊": 2, "蔬菜": 1},
-        "output": "【料理】牛肉麵",
-        "description": "熬煮多時的濃郁牛肉麵，恢復 100 點生命與 40 點魔力。"
-    }
+    # 🌾 3. 農場作物／種子類
+    "小麥": {"price": 20, "type": "material", "description": "基礎烘焙與麵食原料。"},
+    "米": {"price": 25, "type": "material", "description": "香甜白米，製作壽司與飯類必備。"},
+    "蔬菜": {"price": 30, "type": "material", "description": "新鮮蔬菜，烹飪配料。"},
+    "水果": {"price": 35, "type": "material", "description": "多汁水果，用於甜點與氣泡水。"},
+    "香料": {"price": 40, "type": "material", "description": "去腥提味的關鍵調味料。"},
+    "蔥": {"price": 25, "type": "material", "description": "香氣十足的青蔥。"},
+    "鮮魚": {"price": 50, "type": "material", "description": "新鮮漁獲。"},
+
+    # 🥩 4. 基礎肉品類
+    "生肉": {"price": 45, "type": "material", "description": "多種肉類料理的基礎原料。"},
+
+    # 🔨 5. 料理台升級專用素材
+    "鐵塊": {"price": 200, "type": "upgrade", "description": "料理台升級至 Lv.2 的必要素材。"},
+    "魔導金屬": {"price": 1000, "type": "upgrade", "description": "料理台升級至 Lv.3 的必要素材。"},
+
+    # 🏡 6. 牧場動物
+    "乳牛": {"price": 300, "type": "animal", "description": "產出「牛奶」。"},
+    "肉牛": {"price": 400, "type": "animal", "description": "產出「高級肉塊」。"},
+    "豬": {"price": 250, "type": "animal", "description": "產出「五花肉」。"},
+    "雞": {"price": 150, "type": "animal", "description": "產出「雞蛋」。"}
 }
 
-# ⬆️ 料理台升級所需消耗
+# 簡化版價格對應字典（相容舊程式）
+shop_prices = {name: data["price"] for name, data in SHOP_ITEMS.items()}
+
+
+# ==================== 🍳 料理食譜與升級資料庫 ====================
+RECIPE_DATABASE = {
+    # --- 1等料理台 ---
+    "義大利麵": {"station_level": 1, "ingredients": {"小麥": 2, "生肉": 1, "蔬菜": 1}, "output": "【料理】義大利麵", "description": "恢復 40 點生命與 20 點魔力。"},
+    "麵包": {"station_level": 1, "ingredients": {"小麥": 3}, "output": "【料理】麵包", "description": "恢復 25 點生命。"},
+    "香煎魚": {"station_level": 1, "ingredients": {"鮮魚": 1, "香料": 1}, "output": "【料理】香煎魚", "description": "恢復 35 點生命。"},
+    "壽司": {"station_level": 1, "ingredients": {"米": 2, "鮮魚": 1}, "output": "【料理】壽司", "description": "恢復 30 點生命與 15 點魔力。"},
+    "什錦飯": {"station_level": 1, "ingredients": {"米": 2, "生肉": 1, "蔬菜": 2}, "output": "【料理】什錦飯", "description": "恢復 50 點生命。"},
+    "熱狗麵包": {"station_level": 1, "ingredients": {"小麥": 2, "生肉": 1}, "output": "【料理】熱狗麵包", "description": "恢復 30 點生命。"},
+    "紅燒肉": {"station_level": 1, "ingredients": {"五花肉": 2, "香料": 1}, "output": "【料理】紅燒肉", "description": "恢復 60 點生命。"},
+    "包子": {"station_level": 1, "ingredients": {"小麥": 2, "生肉": 1}, "output": "【料理】包子", "description": "恢復 35 點生命。"},
+    "麵疙瘩": {"station_level": 1, "ingredients": {"小麥": 3, "蔬菜": 1}, "output": "【料理】麵疙瘩", "description": "恢復 30 點生命。"},
+    "蔥油餅": {"station_level": 1, "ingredients": {"小麥": 3, "蔥": 2}, "output": "【料理】蔥油餅", "description": "恢復 30 點生命。"},
+    "咖哩飯": {"station_level": 1, "ingredients": {"米": 2, "蔬菜": 2, "生肉": 1}, "output": "【料理】咖哩飯", "description": "恢復 55 點生命與 20 點魔力。"},
+
+    # --- 2等料理台 ---
+    "千層蛋糕": {"station_level": 2, "ingredients": {"小麥": 3, "雞蛋": 2, "牛奶": 2}, "output": "【料理】千層蛋糕", "description": "恢復 60 點魔力。"},
+    "香檳氣泡水": {"station_level": 2, "ingredients": {"水果": 3}, "output": "【料理】香檳氣泡水", "description": "恢復 40 點魔力。"},
+    "泡芙": {"station_level": 2, "ingredients": {"小麥": 2, "雞蛋": 2, "牛奶": 1}, "output": "【料理】泡芙", "description": "恢復 45 點魔力。"},
+    "燉飯": {"station_level": 2, "ingredients": {"米": 3, "生肉": 1, "蔬菜": 2}, "output": "【料理】燉飯", "description": "恢復 70 點生命。"},
+    "舒芙蕾": {"station_level": 2, "ingredients": {"雞蛋": 3, "牛奶": 2}, "output": "【料理】舒芙蕾", "description": "恢復 50 點魔力。"},
+    "披薩": {"station_level": 2, "ingredients": {"小麥": 3, "生肉": 2, "蔬菜": 1}, "output": "【料理】披薩", "description": "恢復 80 點生命。"},
+    "白醬意麵": {"station_level": 2, "ingredients": {"小麥": 2, "牛奶": 2, "生肉": 1}, "output": "【料理】白醬意麵", "description": "恢復 65 點生命與 30 點魔力。"},
+    "東坡肉": {"station_level": 2, "ingredients": {"五花肉": 3, "香料": 2}, "output": "【料理】東坡肉", "description": "恢復 90 點生命。"},
+
+    # --- 3等料理台 ---
+    "紅酒燉牛肉": {"station_level": 3, "ingredients": {"高級肉塊": 2, "蔬菜": 3, "香料": 1}, "output": "【料理】紅酒燉牛肉", "description": "恢復 120 點生命與 50 點魔力！"},
+    "牛肉麵": {"station_level": 3, "ingredients": {"小麥": 2, "高級肉塊": 2, "蔬菜": 1}, "output": "【料理】牛肉麵", "description": "恢復 100 點生命與 40 點魔力。"}
+}
+
 COOKING_STATION_UPGRADE_COST = {
     2: {"gold": 1000, "item": "鐵塊", "qty": 5},
     3: {"gold": 5000, "item": "魔導金屬", "qty": 3}
 }
 
+
+# ==================== 🛠️ 資料庫初始化函數 ====================
 def init_db(db_name="game.db"):
     conn = get_db_connection(db_name)
     cursor = conn.cursor()
 
-    # 1. 玩家主表（包含料理台等級 cooking_level）
+    # 1. 玩家主表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS players (
             user_id INTEGER PRIMARY KEY,
@@ -1366,7 +1144,7 @@ def init_db(db_name="game.db"):
         )
     """)
 
-    # 5. 🌟 牧場動物表（新增）
+    # 5. 牧場動物表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS ranch_animals (
             user_id INTEGER,
@@ -1381,3 +1159,235 @@ def init_db(db_name="game.db"):
     conn.commit()
     cursor.close()
     conn.close()
+
+
+# ==================== 🛒 商城購買邏輯 ====================
+def buy_item_in_db(user_id: int, item_name: str, quantity: int):
+    if quantity <= 0:
+        return False, "❌ 購買數量必須大於 0！"
+    if item_name not in shop_prices:
+        return False, f"❌ 商城中找不到 **{item_name}** 這個商品！"
+
+    unit_price = shop_prices[item_name]
+    total_cost = unit_price * quantity
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT gold FROM players WHERE user_id = ?", (user_id,))
+        player = cursor.fetchone()
+        if not player:
+            return False, "❌ 你尚未建立角色！請先使用 `/setup_roles` 選擇職業。"
+        
+        current_gold = player["gold"] or 0
+        if current_gold < total_cost:
+            return False, f"❌ 金幣不足！購買 `{quantity}` 個 **{item_name}** 需要 `{total_cost} G`（目前有 `{current_gold} G`）。"
+
+        cursor.execute("UPDATE players SET gold = gold - ? WHERE user_id = ?", (total_cost, user_id))
+
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        existing = cursor.fetchone()
+        
+        if existing:
+            cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (quantity, user_id, item_name))
+        else:
+            cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (user_id, item_name, quantity))
+
+        conn.commit()
+        return True, f"🎉 成功購買 **{item_name}** x `{quantity}`！\n💰 總共花費：`{total_cost} G`"
+    except Exception as e:
+        conn.rollback()
+        return False, f"❌ 購買發生錯誤：`{e}`"
+    finally:
+        cursor.close()
+        conn.close()
+
+
+# ==================== 🌾 農場系統相關函數 ====================
+def get_player_farm(user_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT COUNT(*) FROM farm_plots WHERE user_id = ?", (user_id,))
+        if cursor.fetchone()[0] == 0:
+            for i in range(1, 4):
+                cursor.execute("INSERT INTO farm_plots (user_id, plot_index, status) VALUES (?, ?, 'empty')", (user_id, i))
+            conn.commit()
+            
+        cursor.execute("SELECT plot_index, crop_name, ready_timestamp, status FROM farm_plots WHERE user_id = ? ORDER BY plot_index", (user_id,))
+        plots = cursor.fetchall()
+        return plots
+    finally:
+        cursor.close()
+        conn.close()
+
+def plant_crop(user_id, plot_index, crop_name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT status FROM farm_plots WHERE user_id = ? AND plot_index = ?", (user_id, plot_index))
+        plot = cursor.fetchone()
+        if not plot:
+            return False, "❌ 找不到這塊農田！"
+        if plot[0] != 'empty':
+            return False, "❌ 這塊農田已經有作物正在生長或已成熟了！"
+            
+        seed_name = f"{crop_name}種子"
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, seed_name))
+        seed = cursor.fetchone()
+        if not seed or seed[0] < 1:
+            return False, f"❌ 你的背包中沒有 **{seed_name}**！"
+            
+        cursor.execute("UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_name = ?", (user_id, seed_name))
+            
+        ready_time = time.time() + 60 
+        cursor.execute("""
+            UPDATE farm_plots 
+            SET crop_name = ?, ready_timestamp = ?, status = 'growing' 
+            WHERE user_id = ? AND plot_index = ?
+        """, (crop_name, ready_time, user_id, plot_index))
+        
+        conn.commit()
+        return True, f"🌱 成功在 **第 {plot_index} 號田** 種下了 **{crop_name}**！"
+    except Exception as e:
+        conn.rollback()
+        return False, f"❌ 種植錯誤：`{e}`"
+    finally:
+        cursor.close()
+        conn.close()
+
+def harvest_crop(user_id, plot_index):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT crop_name, ready_timestamp, status FROM farm_plots WHERE user_id = ? AND plot_index = ?", (user_id, plot_index))
+        plot = cursor.fetchone()
+        if not plot:
+            return False, "❌ 找不到這塊農田！"
+            
+        crop_name, ready_timestamp, status = plot
+        if status == 'empty':
+            return False, "❌ 這塊田什麼都沒有種！"
+            
+        if status == 'growing':
+            remaining = int(ready_timestamp - time.time())
+            if remaining > 0:
+                return False, f"⏳ 作物還沒成熟！還要等待 `{remaining}` 秒。"
+
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, crop_name))
+        inv = cursor.fetchone()
+        if inv:
+            cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, crop_name))
+        else:
+            cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, crop_name))
+            
+        cursor.execute("""
+            UPDATE farm_plots 
+            SET crop_name = NULL, ready_timestamp = NULL, status = 'empty' 
+            WHERE user_id = ? AND plot_index = ?
+        """, (user_id, plot_index))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return True, f"🌾 成功收成 **{crop_name}**！"
+    except Exception as e:
+        try:
+            conn.rollback()
+            cursor.close()
+            conn.close()
+        except:
+            pass
+        return False, f"❌ 收成錯誤：`{e}`"
+
+
+# ==================== 🍳 料理製作與升級邏輯 ====================
+def cook_recipe_in_db(user_id: int, recipe_name: str):
+    if recipe_name not in RECIPE_DATABASE:
+        return False, f"❌ 找不到食譜 **{recipe_name}**！"
+    
+    recipe = RECIPE_DATABASE[recipe_name]
+    required_level = recipe["station_level"]
+    ingredients = recipe["ingredients"]
+    output_item = recipe["output"]
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT cooking_level FROM players WHERE user_id = ?", (user_id,))
+        player = cursor.fetchone()
+        if not player:
+            return False, "❌ 你尚未建立角色！請先使用 `/setup_roles` 選擇職業。"
+        
+        current_level = player["cooking_level"] or 1
+        if current_level < required_level:
+            return False, f"❌ 料理台等級不足！製作 **{recipe_name}** 需要 Lv.{required_level}。"
+
+        for ing_name, req_qty in ingredients.items():
+            cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, ing_name))
+            inv = cursor.fetchone()
+            current_qty = inv["quantity"] if inv else 0
+            if current_qty < req_qty:
+                return False, f"❌ 素材不足！缺少 **{ing_name}**（需要 `{req_qty}` 個）。"
+
+        for ing_name, req_qty in ingredients.items():
+            cursor.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?", (req_qty, user_id, ing_name))
+
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, output_item))
+        out_inv = cursor.fetchone()
+        if out_inv:
+            cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, output_item))
+        else:
+            cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, output_item))
+
+        conn.commit()
+        return True, f"🍳 成功烹調出 **{output_item}**！"
+    except Exception as e:
+        conn.rollback()
+        return False, f"❌ 烹飪發生錯誤：`{e}`"
+    finally:
+        cursor.close()
+        conn.close()
+
+def upgrade_cooking_station_in_db(user_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT cooking_level, gold FROM players WHERE user_id = ?", (user_id,))
+        player = cursor.fetchone()
+        if not player:
+            return False, "❌ 你尚未建立角色！"
+        
+        current_level = player["cooking_level"] or 1
+        next_level = current_level + 1
+
+        if next_level not in COOKING_STATION_UPGRADE_COST:
+            return False, "❌ 你的料理台已經達到最高等級（Lv.3）！"
+
+        cost_info = COOKING_STATION_UPGRADE_COST[next_level]
+        req_gold = cost_info["gold"]
+        req_item = cost_info["item"]
+        req_qty = cost_info["qty"]
+
+        current_gold = player["gold"] or 0
+        if current_gold < req_gold:
+            return False, f"❌ 金幣不足！升級需要 `{req_gold} G`。"
+
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, req_item))
+        inv = cursor.fetchone()
+        current_item_qty = inv["quantity"] if inv else 0
+        if current_item_qty < req_qty:
+            return False, f"❌ 升級素材不足！需要 **{req_item}** `{req_qty}` 個。"
+
+        cursor.execute("UPDATE players SET gold = gold - ?, cooking_level = cooking_level + 1 WHERE user_id = ?", (req_gold, user_id))
+        cursor.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?", (req_qty, user_id, req_item))
+
+        conn.commit()
+        return True, f"🎉 料理台成功升級至 **Lv.{next_level}**！"
+    except Exception as e:
+        conn.rollback()
+        return False, f"❌ 升級發生錯誤：`{e}`"
+    finally:
+        cursor.close()
+        conn.close()
