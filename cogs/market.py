@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from db import get_active_sellers, get_listings_by_seller, buy_market_item, get_db_connection
+from db import get_active_sellers, get_listings_by_seller, buy_market_item
 import traceback
 
 class SellerSelect(discord.ui.Select):
@@ -86,23 +86,7 @@ class MarketMainView(discord.ui.View):
         super().__init__(timeout=60)
         self.user_id = user_id
         
-        # 🛡️ 確保 market_listings 表格絕對存在，防止查詢時報錯
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS market_listings (
-                listing_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                seller_id INTEGER,
-                item_name TEXT,
-                price INTEGER,
-                quantity INTEGER
-            )
-        """)
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        # 動態載入可以逛的玩家選單
+        # 直接從 db 載入其他玩家選單
         sellers = get_active_sellers(user_id)
         self.add_item(SellerSelect(sellers))
 
