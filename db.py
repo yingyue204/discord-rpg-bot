@@ -89,7 +89,8 @@ def init_db():
             weapon_name TEXT,
             weapon_atk INTEGER DEFAULT 0,
             armor_name TEXT,
-            armor_def INTEGER DEFAULT 0
+            armor_def INTEGER DEFAULT 0,
+            cooking_level INTEGER DEFAULT 1
         )
     """)
     
@@ -101,8 +102,49 @@ def init_db():
         cursor.execute("ALTER TABLE players ADD COLUMN level INTEGER DEFAULT 1")
     if "exp" not in columns:
         cursor.execute("ALTER TABLE players ADD COLUMN exp INTEGER DEFAULT 0")
+    if "cooking_level" not in columns:
+        cursor.execute("ALTER TABLE players ADD COLUMN cooking_level INTEGER DEFAULT 1")
 
-    # (其他表格與初始化邏輯...)
+    # 2. 其他表格初始化（背包、農場、食譜、牧場等）
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS inventory (
+            user_id INTEGER,
+            item_name TEXT,
+            quantity INTEGER,
+            PRIMARY KEY (user_id, item_name)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS farm_plots (
+            user_id INTEGER,
+            plot_index INTEGER,
+            crop_name TEXT,
+            ready_timestamp REAL,
+            status TEXT DEFAULT 'empty',
+            PRIMARY KEY (user_id, plot_index)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS player_recipes (
+            user_id INTEGER,
+            recipe_name TEXT,
+            PRIMARY KEY (user_id, recipe_name)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ranch_animals (
+            user_id INTEGER,
+            animal_index INTEGER,
+            animal_type TEXT,
+            feed_timestamp REAL,
+            status TEXT DEFAULT 'ready',
+            PRIMARY KEY (user_id, animal_index)
+        )
+    """)
+
     conn.commit()
     cursor.close()
     conn.close()
