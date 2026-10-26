@@ -91,13 +91,14 @@ class MarketMainView(discord.ui.View):
 
     @discord.ui.button(label="🏷️ 我要上架商品提示", style=discord.ButtonStyle.success, row=1)
     async def list_item_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("💡 請使用指令 `/market sell <道具名稱> <價格> <數量>` 來將道具上架至市場！", ephemeral=True)
+        # 修正為正確的中文指令提示
+        await interaction.response.send_message("💡 請使用指令 `/商場 販賣` 來將道具上架至市場！", ephemeral=True)
 
 class Market(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # 建立 /market 指令群組
+    # 建立 /商場 指令群組
     market_group = app_commands.Group(name="商場", description="玩家自由市場系統")
 
     @market_group.command(name="瀏覽商場", description="開啟並瀏覽玩家自由市場")
@@ -118,6 +119,7 @@ class Market(commands.Cog):
             await interaction.followup.send(f"❌ 發生系統錯誤：`{e}`", ephemeral=True)
 
     @market_group.command(name="販賣", description="將背包中的道具上架至自由市場")
+    @app_commands.rename(item_name="道具名稱", price="價格", quantity="數量") # 🌟 這裡控制黑框變成中文
     @app_commands.describe(item_name="要上架的道具名稱", price="販售總價格或單價 (G)", quantity="上架數量")
     async def market_sell(self, interaction: discord.Interaction, item_name: str, price: int, quantity: int):
         await interaction.response.defer(ephemeral=True)

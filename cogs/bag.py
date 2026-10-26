@@ -1,91 +1,98 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from db import get_db_connection, use_item_in_db, open_chest_in_db
+from db import get_db_connection
 
-class Bag(commands.Cog):
+class Inventory(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="打開背包", description="查看你的隨身背包與道具")
-    async def bag(self, interaction: discord.Interaction):
+    @app_commands.command(name="背包", description="查看你的個人背包與道具")
+    async def inventory(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
+        user_id = interaction.user.id
 
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT item_name, quantity FROM inventory WHERE user_id = ?", (interaction.user.id,))
-            items = cursor.fetchall()
-            cursor.close()
-            conn.close()
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT item_name, quantity FROM inventory WHERE user_id = ?", (user_id,))
+        items = cursor.fetchall()
 
-            embed = discord.Embed(
-                title=f"📦 [{interaction.user.display_name} · 隨身背包]",
-                color=discord.Color.blue()
-            )
+        cursor.execute("SELECT gold, weapon_atk, armor_def FROM players WHERE user_id = ?", (user_id,))
+        player = cursor.fetchone()
+        cursor.close()
+        conn.close()
 
-            if not items:
-                embed.description = "你的背包空空如也..."
-            else:
-                desc_list = []
-                for item_name, qty in items:
-                    if "寶箱" in item_name:
-                        desc_list.append(f"🎁 **{item_name}** x `{qty}` （可使用 `/open_chest` 開啟）")
-                    elif "【" in item_name:
-                        desc_list.append(f"⚔️ **{item_name}** x `{qty}`")
-                    else:
-                        desc_list.append(f"• **{item_name}** x `{qty}`")
-                embed.description = "\n".join(desc_list)
+        if not player:
+            await interaction.followup.send("⚠️ 請先建立角色！", ephemeral=True)
+            return
 
-            await interaction.followup.send(embed=embed, ephemeral=True)
+        desc = f"💰 **持有金幣**：`{player['gold']} G`\n⚔️ **裝備加成**：攻擊 `+{player['weapon_atk'] or 0}` | 防禦 `+{player['armor_def'] or 0}`\n\n📦 **【背包物品】**\n"
+        if items:
+            for item in items:
+                desc += f"- **{item['item_name']}** x `{item['quantity']}`\n"
+        else:
+            desc += "*(背包目前空空如也)*"
 
-        except Exception as e:
-            await interaction.followup.send(f"❌ 發生錯誤：`{e}`", ephemeral=True)
+        embed = discord.Embed(title="🎒 【冒險者背包】", description=desc, color=discord.Color.purple())
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="開啟寶箱", description="開啟背包中的神秘寶箱獲得裝備")
-    async def open_chest(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-
-        try:
-            res = open_chest_in_db(interaction.user.id)
-            if not res[0]:
-                await interaction.followup.send(res[1], ephemeral=True)
-                return
-
-            success, msg, item_name, item_type, bonus, quality = res
-            
-            # 依品質決定 Embed 顏色
-            color = discord.Color.blue()
-            if "稀有" in quality:
-                color = discord.Color.blue()
-            elif "史詩" in quality:
-                color = discord.Color.purple()
-            elif "傳說" in quality:
-                color = discord.Color.gold()
-
-            embed = discord.Embed(title="🎁 【寶箱開啟成功】", description=msg, color=color)
-            await interaction.followup.send(embed=embed, ephemeral=True)
-
-        except Exception as e:
-            await interaction.followup.send(f"❌ 開啟寶箱時發生錯誤：`{e}`", ephemeral=True)
-
-    @app_commands.command(name="使用道具", description="使用背包中的消耗道具（例如：生命藥水）")
-    @app_commands.describe(item_name="要使用的道具名稱")
+    @app_commands.command(name="使用道具", description="使用背包中的藥水、急救包或開啟神秘寶箱")
+    @app_commands.rename(item_name="道具名稱")
     async def use_item(self, interaction: discord.Interaction, item_name: str):
         await interaction.response.defer(ephemeral=True)
+        user_id = interaction.user.id
 
-        try:
-            success, msg = use_item_in_db(interaction.user.id, item_name)
-            
-            if success:
-                embed = discord.Embed(title="📦 【道具使用成功】", description=msg, color=discord.Color.green())
-            else:
-                embed = discord.Embed(title="⚠️ 【道具使用失敗】", description=msg, color=discord.Color.orange())
-                
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            
-        except Exception as e:
-            await interaction.followup.send(f"❌ 發生未預期的錯誤：`{e}`", ephemeral=True)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # 檢查背包是否有此道具
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        inv = cursor.fetchone()
+        if not inv or inv["quantity"] <= 0:
+            cursor.close()
+            conn.close()
+            await interaction.followup.send(f"❌ 你的背包中沒有 **{item_name}**！", ephemeral=True)
+            return
+
+        cursor.execute("SELECT hp, max_hp, mp FROM players WHERE user_id = ?", (user_id,))
+        player = cursor.fetchone()
+        hp, max_hp, mp = player["hp"], player["max_hp"], player["mp"]
+
+        msg = ""
+        if item_name == "生命藥水":
+            new_hp = min(max_hp, hp + 30)
+            cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, user_id))
+            msg = f"🧪 使用了 **生命藥水**，恢復了 30 點生命值（當前血量：`{new_hp}/{max_hp}`）。"
+        elif item_name == "急救包":
+            new_hp = min(max_hp, hp + 50)
+            cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, user_id))
+            msg = f"🩹 使用了 **急救包**，恢復了 50 點生命值（當前血量：`{new_hp}/{max_hp}`）。"
+        elif item_name == "魔力藥水":
+            new_mp = mp + 20
+            cursor.execute("UPDATE players SET mp = ? WHERE user_id = ?", (new_mp, user_id))
+            msg = f"💧 使用了 **魔力藥水**，恢復了 20 點魔力（當前魔力：`{new_mp}`）。"
+        elif item_name == "能量飲料":
+            new_mp = mp + 40
+            cursor.execute("UPDATE players SET mp = ? WHERE user_id = ?", (new_mp, user_id))
+            msg = f"⚡ 使用了 **能量飲料**，恢復了 40 點魔力（當前魔力：`{new_mp}`）。"
+        else:
+            cursor.close()
+            conn.close()
+            await interaction.followup.send(f"⚠️ **{item_name}** 無法直接使用！", ephemeral=True)
+            return
+
+        # 消耗一個道具
+        new_qty = inv["quantity"] - 1
+        if new_qty <= 0:
+            cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        else:
+            cursor.execute("UPDATE inventory SET quantity = ? WHERE user_id = ? AND item_name = ?", (new_qty, user_id, item_name))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        await interaction.followup.send(f"✅ {msg}", ephemeral=True)
 
 async def setup(bot):
-    await bot.add_cog(Bag(bot))
+    await bot.add_cog(Inventory(bot))

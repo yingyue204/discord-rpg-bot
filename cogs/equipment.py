@@ -8,6 +8,7 @@ class Equipment(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="穿戴裝備", description="從背包中穿戴指定的武器或防具")
+    @app_commands.rename(item_name="裝備名稱")  # 🌟 這裡控制黑框顯示為中文「裝備名稱」
     @app_commands.describe(item_name="你想穿戴的裝備完整名稱（例如：【精良】光束劍）")
     async def equip(self, interaction: discord.Interaction, item_name: str):
         await interaction.response.defer(ephemeral=True)
@@ -23,5 +24,4 @@ class Equipment(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 async def setup(bot):
-    await bot.app_commands_to_sync() if hasattr(bot, 'app_commands_to_sync') else None
     await bot.add_cog(Equipment(bot))

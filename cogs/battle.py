@@ -2,7 +2,7 @@ import random
 import discord
 from discord.ext import commands
 from discord import app_commands
-from db import get_db_connection, gain_player_exp
+from db import get_db_connection
 
 class BattleChoiceView(discord.ui.View):
     def __init__(self, user_id, monster_name, monster_hp, monster_atk):
@@ -11,6 +11,7 @@ class BattleChoiceView(discord.ui.View):
         self.monster_name = monster_name
         self.monster_hp = monster_hp
         self.monster_atk = monster_atk
+        self.message = None  # 記錄訊息以便後續更新
 
     @discord.ui.button(label="⚔️ 普通攻擊", style=discord.ButtonStyle.primary)
     async def attack_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -32,6 +33,7 @@ class BattleChoiceView(discord.ui.View):
             await interaction.response.send_message("⚠️ 這不是你的戰鬥！", ephemeral=True)
             return
         
+        await interaction.response.defer()
         for child in self.children:
             child.disabled = True
         
@@ -40,24 +42,30 @@ class BattleChoiceView(discord.ui.View):
             description=f"你迅速撤退，成功從 **{self.monster_name}** 面前逃脫了！",
             color=discord.Color.orange()
         )
-        await interaction.response.edit_message(embed=embed, view=self)
+        if self.message:
+            await self.message.edit(embed=embed, view=self)
+        else:
+            await interaction.edit_original_response(embed=embed, view=self)
         self.stop()
 
     async def process_turn(self, interaction: discord.Interaction, action: str):
+        # 💡 關鍵：先 defer() 避免 Discord 3秒超時與未及時回應錯誤！
+        await interaction.response.defer()
+
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
             # 取得玩家最新數值與裝備加成
             cursor.execute("""
-                SELECT hp, max_hp, atk, def, weapon_atk, armor_def 
+                SELECT hp, max_hp, atk, def, weapon_atk, armor_def, level, exp 
                 FROM players WHERE user_id = ?
             """, (self.user_id,))
             player = cursor.fetchone()
             if not player:
-                await interaction.response.send_message("⚠️ 找不到你的角色資料！", ephemeral=True)
+                await interaction.followup.send("⚠️ 找不到你的角色資料！", ephemeral=True)
                 return
 
-            hp, max_hp, base_atk, base_def, weapon_atk, armor_def = player
+            hp, max_hp, base_atk, base_def, weapon_atk, armor_def, level, exp = player
             total_atk = base_atk + (weapon_atk or 0)
             total_def = base_def + (armor_def or 0)
 
@@ -67,15 +75,13 @@ class BattleChoiceView(discord.ui.View):
                 action_desc = f"你對 **{self.monster_name}** 發動普通攻擊，造成了 `{player_dmg}` 點傷害！"
             
             elif action == "skill":
-                # 檢查玩家 MP 是否足夠
                 cursor.execute("SELECT mp FROM players WHERE user_id = ?", (self.user_id,))
                 current_mp = cursor.fetchone()[0]
             
                 if current_mp < 15:
-                    await interaction.response.send_message("❌ 你的魔力值 (MP) 不足！", ephemeral=True)
+                    await interaction.followup.send("❌ 你的魔力值 (MP) 不足！", ephemeral=True)
                     return
 
-                # 扣除 15 MP
                 cursor.execute("UPDATE players SET mp = mp - 15 WHERE user_id = ?", (self.user_id,))
                 conn.commit()
             
@@ -91,10 +97,24 @@ class BattleChoiceView(discord.ui.View):
             
                 cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (gold_reward, self.user_id))
             
-                reward_text = f"💰 獲得金幣：`+{gold_reward} G`"
-                
-                success_exp, exp_msg = gain_player_exp(self.user_id, exp_amount=80)
-                reward_text += f"\n✨ 獲得經驗：`+80 EXP`\n{exp_msg}"
+                exp += 80
+                next_level_exp = level * 100
+                level_up_msg = ""
+                while exp >= next_level_exp:
+                    exp -= next_level_exp
+                    level += 1
+                    next_level_exp = level * 100
+                    level_up_msg += f"\n🎉 **等級提升！** 恭喜升到 **Lv.{level}**（生命上限與攻擊力提升！）"
+                    cursor.execute("""
+                        UPDATE players 
+                        SET level = ?, exp = ?, max_hp = max_hp + 20, hp = max_hp + 20, atk = atk + 3 
+                        WHERE user_id = ?
+                    """, (level, exp, self.user_id))
+
+                if not level_up_msg:
+                    cursor.execute("UPDATE players SET exp = ? WHERE user_id = ?", (exp, self.user_id))
+
+                reward_text = f"💰 獲得金幣：`+{gold_reward} G`\n✨ 獲得經驗：`+80 EXP`{level_up_msg}"
 
                 if dropped_item:
                     cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (self.user_id, dropped_item))
@@ -115,7 +135,10 @@ class BattleChoiceView(discord.ui.View):
                     description=f"你成功擊敗了 **{self.monster_name}**！\n\n{action_desc}\n\n**【戰利品結算】**\n{reward_text}",
                     color=discord.Color.green()
                 )
-                await interaction.response.edit_message(embed=embed, view=self)
+                if self.message:
+                    await self.message.edit(embed=embed, view=self)
+                else:
+                    await interaction.edit_original_response(embed=embed, view=self)
                 self.stop()
                 return
 
@@ -140,7 +163,10 @@ class BattleChoiceView(discord.ui.View):
                     description=f"**{self.monster_name}** 反擊造成了 `{monster_dmg}` 點傷害。\n你體力不支倒地，已被緊急送往新手村診所治療！\n💖 當前血量已恢復至：`{new_hp}`",
                     color=discord.Color.red()
                 )
-                await interaction.response.edit_message(embed=embed, view=self)
+                if self.message:
+                    await self.message.edit(embed=embed, view=self)
+                else:
+                    await interaction.edit_original_response(embed=embed, view=self)
                 self.stop()
                 return
 
@@ -154,8 +180,17 @@ class BattleChoiceView(discord.ui.View):
             embed.add_field(name="🛡️ 你的狀態", value=f"❤️ 血量：`{hp}/{max_hp}`\n⚔️ 攻擊力：`{total_atk}`", inline=True)
             embed.set_footer(text="💡 60秒未操作將自動過期。")
 
-            await interaction.response.edit_message(embed=embed, view=self)
+            if self.message:
+                await self.message.edit(embed=embed, view=self)
+            else:
+                await interaction.edit_original_response(embed=embed, view=self)
 
+        except Exception as e:
+            print(f"❌ 戰鬥執行錯誤: {e}")
+            try:
+                await interaction.followup.send(f"❌ 戰鬥發生錯誤：`{e}`", ephemeral=True)
+            except:
+                pass
         finally:
             cursor.close()
             conn.close()
@@ -200,7 +235,8 @@ class Battle(commands.Cog):
         embed.set_footer(text="💡 60秒未操作將自動過期。")
 
         view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk)
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        sent_message = await interaction.followup.send(embed=embed, view=view, ephemeral=True, wait=True)
+        view.message = sent_message
 
 async def setup(bot):
     await bot.add_cog(Battle(bot))

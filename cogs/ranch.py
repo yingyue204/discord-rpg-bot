@@ -103,8 +103,15 @@ class Ranch(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="牧場", description="開啟你的專屬牧場與動物管理中心")
-    async def ranch(self, interaction: discord.Interaction):
+    @app_commands.command(name="購買動物", description="在牧場空柵欄中購入並飼養動物")
+    @app_commands.rename(plot_index="柵欄編號", animal_type="動物種類")  # 🌟 加上這一行把黑框英文改成中文
+    @app_commands.choices(animal_type=[
+        app_commands.Choice(name="乳牛 (產出:牛奶 / 300G)", value="乳牛"),
+        app_commands.Choice(name="肉牛 (產出:高級肉塊 / 400G)", value="肉牛"),
+        app_commands.Choice(name="豬 (產出:五花肉 / 250G)", value="豬"),
+        app_commands.Choice(name="雞 (產出:雞蛋 / 150G)", value="雞")
+    ])
+    async def buy_animal(self, interaction: discord.Interaction, plot_index: int, animal_type: str):
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
 
