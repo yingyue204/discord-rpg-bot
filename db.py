@@ -7,6 +7,35 @@ def get_db_connection():
     conn.execute("PRAGMA journal_mode=WAL;")
     return conn
 
+# ⚔️ 戰鬥勝利的資料庫結算處理
+def process_battle_victory_in_db(user_id: int, gold_reward: int, exp_reward: int, dropped_item: str = None):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # 1. 增加金幣
+        cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (gold_reward, user_id))
+        
+        # 2. 增加經驗值並處理升級（假設你有寫 gain_player_exp 函數）
+        # 這裡可以直接調用我們之前寫好的升級邏輯
+        # success_exp, exp_msg = gain_player_exp(user_id, exp_amount=exp_reward)
+        
+        # 3. 如果有掉落物，加入背包
+        reward_text = f"💰 獲得金幣：`+{gold_reward} G`"
+        if dropped_item:
+            cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, dropped_item))
+            row = cursor.fetchone()
+            if row:
+                cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, dropped_item))
+            else:
+                cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, dropped_item))
+            reward_text += f"\n🎁 獲得戰利品：**{dropped_item}** x `1`"
+
+        conn.commit()
+        return reward_text
+    finally:
+        cursor.close()
+        conn.close()
+
 def get_player_status(user_id):
     """取得玩家完整的屬性狀態"""
     conn = get_db_connection()
@@ -26,49 +55,65 @@ def get_player_status(user_id):
         cursor.close()
         conn.close()
 
-# 初始化資料庫與所有表格
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
-    try:
-        # 1. 建立玩家檔案表格（包含 last_mp_update 欄位）
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS players (
-                user_id INTEGER PRIMARY KEY,
-                role TEXT,
-                hp INTEGER,
-                max_hp INTEGER,
-                mp INTEGER,
-                max_mp INTEGER,
-                atk INTEGER,
-                def INTEGER,
-                gold INTEGER,
-                weapon_name TEXT,
-                weapon_atk INTEGER,
-                armor_name TEXT,
-                armor_def INTEGER,
-                last_mp_update INTEGER DEFAULT 0
-            )
-        """)
+    
+    # 1. 玩家資料表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS players (
+            user_id INTEGER PRIMARY KEY,
+            role_name TEXT,
+            level INTEGER DEFAULT 1,
+            exp INTEGER DEFAULT 0,
+            hp INTEGER,
+            max_hp INTEGER,
+            mp INTEGER,
+            max_mp INTEGER,
+            stamina INTEGER,
+            max_stamina INTEGER,
+            atk INTEGER,
+            def INTEGER,
+            gold INTEGER DEFAULT 100,
+            weapon_name TEXT,
+            weapon_atk INTEGER DEFAULT 0,
+            armor_name TEXT,
+            armor_def INTEGER DEFAULT 0
+        )
+    """)
+    
+    # 🛡️ 自動補上可能缺少的欄位（防止舊資料庫報錯）
+    cursor.execute("PRAGMA table_info(players)")
+    columns = [column[1] for column in cursor.fetchall()]
+    
+    if "level" not in columns:
+        cursor.execute("ALTER TABLE players ADD COLUMN level INTEGER DEFAULT 1")
+    if "exp" not in columns:
+        cursor.execute("ALTER TABLE players ADD COLUMN exp INTEGER DEFAULT 0")
 
-        # 2. 建立背包表格
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS inventory (
-                user_id INTEGER,
-                item_name TEXT,
-                quantity INTEGER,
-                PRIMARY KEY (user_id, item_name)
-            )
-        """)
+    # (其他表格與初始化邏輯...)
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    # 2. 建立背包表格
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS inventory (
+            user_id INTEGER,
+            item_name TEXT,
+            quantity INTEGER,
+            PRIMARY KEY (user_id, item_name)
+        )
+    """)
         
-        conn.commit()
+    conn.commit()
 
-        # 3. 防呆機制：如果舊資料庫沒有 last_mp_update 欄位，自動幫它補上
-        try:
-            cursor.execute("ALTER TABLE players ADD COLUMN last_mp_update INTEGER DEFAULT 0")
-            conn.commit()
-        except Exception:
-            pass # 欄位已存在時會直接略過
+    # 3. 防呆機制：如果舊資料庫沒有 last_mp_update 欄位，自動幫它補上
+    try:
+        cursor.execute("ALTER TABLE players ADD COLUMN last_mp_update INTEGER DEFAULT 0")
+        conn.commit()
+    except Exception:
+        pass # 欄位已存在時會直接略過
 
     finally:
         cursor.close()
@@ -121,7 +166,50 @@ def consume_mp(user_id: int, cost: int):
         cursor.close()
         conn.close()
 
-# 🎁 開啟神秘寶箱邏輯
+# 📦 寶箱抽獎專用裝備資料庫（已移除材料與消耗，並平衡 bonus 數值）
+EQUIPMENT_DATABASE = {
+    # ---------------- ⚪ 普通裝備系列 (Normal) ----------------
+    "【普通】高震動短刀": {"type": "weapon", "bonus": 8},
+    "【普通】光束劍": {"type": "weapon", "bonus": 10},
+    "【普通】電擊打擊槍": {"type": "weapon", "bonus": 12},
+    "【普通】重型巨斧": {"type": "weapon", "bonus": 14},
+    "【普通】戰術護甲": {"type": "armor", "bonus": 6},
+    "【普通】納米防護服": {"type": "armor", "bonus": 8},
+    "【普通】合金重盾": {"type": "armor", "bonus": 10},
+    "【普通】外骨骼裝甲": {"type": "armor", "bonus": 12},
+
+    # ---------------- 🔵 精良裝備系列 (Rare) ----------------
+    "【精良】高震動短刀": {"type": "weapon", "bonus": 18},
+    "【精良】光束劍": {"type": "weapon", "bonus": 21},
+    "【精良】電擊打擊槍": {"type": "weapon", "bonus": 24},
+    "【精良】重型巨斧": {"type": "weapon", "bonus": 27},
+    "【精良】戰術護甲": {"type": "armor", "bonus": 14},
+    "【精良】納米防護服": {"type": "armor", "bonus": 16},
+    "【精良】合金重盾": {"type": "armor", "bonus": 19},
+    "【精良】外骨骼裝甲": {"type": "armor", "bonus": 22},
+
+    # ---------------- 🟣 史詩裝備系列 (Epic) ----------------
+    "【史詩】高震動短刀": {"type": "weapon", "bonus": 35},
+    "【史詩】光束劍": {"type": "weapon", "bonus": 38},
+    "【史詩】電磁打擊槍": {"type": "weapon", "bonus": 42},
+    "【史詩】重型巨斧": {"type": "weapon", "bonus": 46},
+    "【史詩】戰術護甲": {"type": "armor", "bonus": 28},
+    "【史詩】納米防護服": {"type": "armor", "bonus": 31},
+    "【史詩】合金重盾": {"type": "armor", "bonus": 34},
+    "【史詩】外骨骼裝甲": {"type": "armor", "bonus": 38},
+
+    # ---------------- 🟡 傳說級裝備系列 (Legendary) ----------------
+    "【傳說級】終焉短刀": {"type": "weapon", "bonus": 60},
+    "【傳說級】終焉光束劍": {"type": "weapon", "bonus": 65},
+    "【傳說級】毀滅電磁槍": {"type": "weapon", "bonus": 70},
+    "【傳說級】毀滅重型巨斧": {"type": "weapon", "bonus": 75},
+    "【傳說級】泰坦戰術護甲": {"type": "armor", "bonus": 48},
+    "【傳說級】脈衝防衛力場": {"type": "armor", "bonus": 52},
+    "【傳說級】絕對防禦重盾": {"type": "armor", "bonus": 56},
+    "【傳說級】泰坦合金重裝": {"type": "armor", "bonus": 60}
+}
+
+# 🎁 開啟神秘寶箱邏輯（已適配最新裝備庫名稱）
 def open_chest_in_db(user_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -139,7 +227,7 @@ def open_chest_in_db(user_id: int):
         else:
             cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = '神秘寶箱'", (user_id,))
 
-        # 3. 隨機決定品質 (白、藍、紫、金)
+        # 3. 隨機決定品質
         quality_roll = random.random()
         if quality_roll < 0.60:
             prefix = "普通"
@@ -154,36 +242,38 @@ def open_chest_in_db(user_id: int):
             prefix = "傳說級"
             quality = "🟡 傳說級"
 
-        # 4. 隨機決定是武器還是防具，並從 EQUIPMENT_DATABASE 中選出對應名稱
+        # 4. 隨機決定是武器還是防具，並對應新資料庫命名
         is_weapon = random.choice([True, False])
 
         if is_weapon:
             item_type = "weapon"
-            # 根據品質隨機挑選該品質的武器基礎名稱
             if prefix == "傳說級":
-                weapon_bases = ["終焉光束劍", "毀滅重型巨斧"]
+                weapon_bases = ["終焉短刀", "終焉光束劍", "毀滅電磁槍", "毀滅重型巨斧"]
             else:
-                weapon_bases = ["高震動短刀", "光束劍", "電磁打擊槍", "重型巨斧"]
+                weapon_bases = ["高震動短刀", "光束劍", "電擊打擊槍", "重型巨斧"]
             
             chosen_base = random.choice(weapon_bases)
+            
+            # 名稱對應修正（史詩的電磁打擊槍）
+            if prefix == "史詩" and chosen_base == "電擊打擊槍":
+                chosen_base = "電磁打擊槍"
+                
             item_name = f"【{prefix}】{chosen_base}"
         else:
             item_type = "armor"
-            # 根據品質隨機挑選該品質的防具基礎名稱
             if prefix == "傳說級":
-                armor_bases = ["泰坦合金重裝", "脈衝防衛力場"]
+                armor_bases = ["泰坦戰術護甲", "脈衝防衛力場", "絕對防禦重盾", "泰坦合金重裝"]
             else:
                 armor_bases = ["戰術護甲", "納米防護服", "合金重盾", "外骨骼裝甲"]
                 
             chosen_base = random.choice(armor_bases)
             item_name = f"【{prefix}】{chosen_base}"
 
-        # 5. 🎯 直接從集中管理的 EQUIPMENT_DATABASE 查表取得絕對正確的 bonus 數值
+        # 5. 從 EQUIPMENT_DATABASE 查表取得 bonus 數值
         if item_name in EQUIPMENT_DATABASE:
             bonus = EQUIPMENT_DATABASE[item_name]["bonus"]
         else:
-            # 防呆保底（若名稱不小心拼錯時的預設值）
-            bonus = 10 
+            bonus = 10  # 防呆保底
 
         # 6. 將開出來的裝備放入背包
         cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
@@ -216,7 +306,7 @@ def equip_item_in_db(user_id: int, item_name: str):
 
         # 2. 判斷是武器還是防具，並計算數值
         # 依據名稱中的品質給予固定加成：普通(+8/+5)、精良(+15/+10)、史詩(+25/+18)、傳說級(+40/+30)
-        if "光束劍" in item_name or "高振動短刀" in item_name or "電磁打擊槍" in item_name or "重型巨斧" in item_name:
+        if "光束劍" in item_name or "高振動短刀" in item_name or "電擊打擊槍" in item_name or "重型巨斧" in item_name:
             is_weapon = True
             if "普通" in item_name: atk_bonus = 8
             elif "精良" in item_name: atk_bonus = 15
@@ -741,11 +831,13 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. 玩家資料表
+    # 1. 建立基礎 players 表格（包含 level 與 exp）
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS players (
             user_id INTEGER PRIMARY KEY,
             role_name TEXT,
+            level INTEGER DEFAULT 1,
+            exp INTEGER DEFAULT 0,
             hp INTEGER,
             max_hp INTEGER,
             mp INTEGER,
@@ -754,14 +846,26 @@ def init_db():
             max_stamina INTEGER,
             atk INTEGER,
             def INTEGER,
-            gold INTEGER DEFAULT 30,
+            gold INTEGER DEFAULT 100,
             weapon_name TEXT,
             weapon_atk INTEGER DEFAULT 0,
             armor_name TEXT,
             armor_def INTEGER DEFAULT 0
         )
     """)
+    
+    # 2. 強制檢查並補上可能遺失的欄位（針對已經存在的舊資料庫）
+    try:
+        cursor.execute("ALTER TABLE players ADD COLUMN level INTEGER DEFAULT 1")
+    except Exception:
+        pass  # 如果欄位已經存在，會自動略過錯誤
+        
+    try:
+        cursor.execute("ALTER TABLE players ADD COLUMN exp INTEGER DEFAULT 0")
+    except Exception:
+        pass  # 如果欄位已經存在，會自動略過錯誤
 
+    
     # 2. 背包資料表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS inventory (
@@ -1014,6 +1118,48 @@ def harvest_crop(user_id, plot_index):
     except Exception as e:
         conn.rollback()
         return False, f"❌ 收成錯誤：`{e}`"
+    finally:
+        cursor.close()
+        conn.close()
+
+# 📈 增加玩家經驗值與處理升級邏輯
+def gain_player_exp(user_id: int, exp_amount: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # 取得玩家當前等級與經驗值
+        cursor.execute("SELECT level, exp FROM players WHERE user_id = ?", (user_id,))
+        player = cursor.fetchone()
+        if not player:
+            return False, "找不到玩家資料"
+        
+        level, current_exp = player
+        current_exp += exp_amount
+        
+        # 升級所需經驗值公式（例如：當前等級 * 100）
+        next_level_exp = level * 100
+        level_up_msg = ""
+        
+        # 檢查是否升級（支援連續升級）
+        while current_exp >= next_level_exp:
+            current_exp -= next_level_exp
+            level += 1
+            next_level_exp = level * 100
+            
+            # 升級時順便提升屬性（可依你的需求調整數值）
+            cursor.execute("""
+                UPDATE players 
+                SET level = ?, exp = ?, max_hp = max_hp + 20, hp = max_hp + 20, atk = atk + 3 
+                WHERE user_id = ?
+            """, (level, current_exp, user_id))
+            level_up_msg += f"\n🎉 **等級提升！** 恭喜升到 **Lv.{level}**（生命上限與攻擊力提升！）"
+        
+        # 若沒有升級，僅更新經驗值
+        if not level_up_msg:
+            cursor.execute("UPDATE players SET exp = ? WHERE user_id = ?", (current_exp, user_id))
+            
+        conn.commit()
+        return True, f"獲得經驗值 `+{exp_amount} EXP`{level_up_msg}"
     finally:
         cursor.close()
         conn.close()

@@ -2,30 +2,15 @@ import random
 import discord
 from discord.ext import commands
 from discord import app_commands
-from db import get_db_connection, update_and_get_mp, consume_mp
+from db import get_db_connection, gain_player_exp
 
 class BattleChoiceView(discord.ui.View):
-    def __init__(self, user_id, monster_name, monster_hp, monster_atk, is_adventure_ambush=False):
+    def __init__(self, user_id, monster_name, monster_hp, monster_atk):
         super().__init__(timeout=60)
         self.user_id = user_id
         self.monster_name = monster_name
         self.monster_hp = monster_hp
         self.monster_atk = monster_atk
-        self.is_adventure_ambush = is_adventure_ambush
-        self.message = None
-
-    async def on_timeout(self):
-        # 60 秒未操作自動失效按鈕
-        if self.message:
-            for child in self.children:
-                child.disabled = True
-            try:
-                embed = self.message.embeds[0]
-                embed.color = discord.Color.dark_gray()
-                embed.set_footer(text="⌛ 戰鬥逾時未操作，已自動中斷。")
-                await self.message.edit(embed=embed, view=self)
-            except Exception:
-                pass
 
     @discord.ui.button(label="⚔️ 普通攻擊", style=discord.ButtonStyle.primary)
     async def attack_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -39,14 +24,6 @@ class BattleChoiceView(discord.ui.View):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("⚠️ 這不是你的戰鬥！", ephemeral=True)
             return
-        
-        # 檢查當前 MP 是否足夠
-        mp, max_mp = update_and_get_mp(self.user_id)
-        if mp < 15:
-            await interaction.response.send_message("❌ 你的魔力 (MP) 不足 15 點，無法施放技能！", ephemeral=True)
-            return
-        
-        consume_mp(self.user_id, 15)
         await self.process_turn(interaction, action="skill")
 
     @discord.ui.button(label="🏃 逃跑", style=discord.ButtonStyle.danger)
@@ -67,8 +44,6 @@ class BattleChoiceView(discord.ui.View):
         self.stop()
 
     async def process_turn(self, interaction: discord.Interaction, action: str):
-        await interaction.response.defer()
-        
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
@@ -79,7 +54,7 @@ class BattleChoiceView(discord.ui.View):
             """, (self.user_id,))
             player = cursor.fetchone()
             if not player:
-                await interaction.followup.send("⚠️ 找不到你的角色資料！", ephemeral=True)
+                await interaction.response.send_message("⚠️ 找不到你的角色資料！", ephemeral=True)
                 return
 
             hp, max_hp, base_atk, base_def, weapon_atk, armor_def = player
@@ -90,7 +65,20 @@ class BattleChoiceView(discord.ui.View):
             if action == "attack":
                 player_dmg = max(5, total_atk - random.randint(0, 5))
                 action_desc = f"你對 **{self.monster_name}** 發動普通攻擊，造成了 `{player_dmg}` 點傷害！"
-            else:  # skill
+            
+            elif action == "skill":
+                # 檢查玩家 MP 是否足夠
+                cursor.execute("SELECT mp FROM players WHERE user_id = ?", (self.user_id,))
+                current_mp = cursor.fetchone()[0]
+            
+                if current_mp < 15:
+                    await interaction.response.send_message("❌ 你的魔力值 (MP) 不足！", ephemeral=True)
+                    return
+
+                # 扣除 15 MP
+                cursor.execute("UPDATE players SET mp = mp - 15 WHERE user_id = ?", (self.user_id,))
+                conn.commit()
+            
                 player_dmg = max(12, int(total_atk * 1.5) - random.randint(0, 3))
                 action_desc = f"你消耗 15 MP 施放強力技能，對 **{self.monster_name}** 造成了 `{player_dmg}` 點重創！"
 
@@ -99,12 +87,15 @@ class BattleChoiceView(discord.ui.View):
             # 2. 檢查怪物是否死亡（戰鬥勝利）
             if self.monster_hp <= 0:
                 gold_reward = random.randint(15, 30)
-                # 40% 機率掉落隨機素材
                 dropped_item = random.choice(["生命藥水", "鐵劍碎片", "魔力藥水"]) if random.random() < 0.4 else None
-                
+            
                 cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (gold_reward, self.user_id))
-                
+            
                 reward_text = f"💰 獲得金幣：`+{gold_reward} G`"
+                
+                success_exp, exp_msg = gain_player_exp(self.user_id, exp_amount=80)
+                reward_text += f"\n✨ 獲得經驗：`+80 EXP`\n{exp_msg}"
+
                 if dropped_item:
                     cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (self.user_id, dropped_item))
                     row = cursor.fetchone()
@@ -124,10 +115,7 @@ class BattleChoiceView(discord.ui.View):
                     description=f"你成功擊敗了 **{self.monster_name}**！\n\n{action_desc}\n\n**【戰利品結算】**\n{reward_text}",
                     color=discord.Color.green()
                 )
-                if self.message:
-                    await self.message.edit(embed=embed, view=self)
-                else:
-                    await interaction.followup.send(embed=embed)
+                await interaction.response.edit_message(embed=embed, view=self)
                 self.stop()
                 return
 
@@ -138,34 +126,25 @@ class BattleChoiceView(discord.ui.View):
             cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (hp, self.user_id))
             conn.commit()
 
-            # 🏥 【當下送醫機制檢查】
+            # 4. 檢查玩家是否倒地（當下送醫機制）
             if hp <= 0:
-                new_hp = 50  # 診所急救恢復的血量
-            
-                # 立即更新資料庫，將血量補回 50，避免留在 0
+                new_hp = 50 
                 cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, self.user_id))
                 conn.commit()
 
-                # 停用戰鬥介面的按鈕
                 for child in self.children:
                     child.disabled = True
 
-                # 發送即時的診所敗北訊息
                 embed = discord.Embed(
                     title="🏥 【新手村診所·緊急送醫】",
                     description=f"**{self.monster_name}** 反擊造成了 `{monster_dmg}` 點傷害。\n你體力不支倒地，已被緊急送往新手村診所治療！\n💖 當前血量已恢復至：`{new_hp}`",
                     color=discord.Color.red()
                 )
-            
-                if self.message:
-                    await self.message.edit(embed=embed, view=self)
-                else:
-                    await interaction.followup.send(embed=embed, ephemeral=True)
-                
+                await interaction.response.edit_message(embed=embed, view=self)
                 self.stop()
                 return
 
-            # 5. 更新戰鬥面板
+            # 5. 更新戰鬥面板（繼續下一回合）
             embed = discord.Embed(
                 title="⚔️ 【回合戰鬥進行中】",
                 description=action_desc,
@@ -175,8 +154,7 @@ class BattleChoiceView(discord.ui.View):
             embed.add_field(name="🛡️ 你的狀態", value=f"❤️ 血量：`{hp}/{max_hp}`\n⚔️ 攻擊力：`{total_atk}`", inline=True)
             embed.set_footer(text="💡 60秒未操作將自動過期。")
 
-            if self.message:
-                await self.message.edit(embed=embed, view=self)
+            await interaction.response.edit_message(embed=embed, view=self)
 
         finally:
             cursor.close()
@@ -206,7 +184,6 @@ class Battle(commands.Cog):
             await interaction.followup.send("⚠️ 你目前處於倒地狀態，無法進行戰鬥！請先透過冒險或診所恢復。", ephemeral=True)
             return
 
-        # 隨機產生野生怪物
         monster_names = ["荒野流民", "廢土狂徒", "失控機械兵", "暴走掠奪者"]
         monster_name = random.choice(monster_names)
         monster_hp = random.randint(45, 75)
@@ -223,8 +200,7 @@ class Battle(commands.Cog):
         embed.set_footer(text="💡 60秒未操作將自動過期。")
 
         view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk)
-        sent_message = await interaction.followup.send(embed=embed, view=view, ephemeral=True, wait=True)
-        view.message = sent_message
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Battle(bot))
