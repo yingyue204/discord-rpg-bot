@@ -1163,3 +1163,221 @@ def gain_player_exp(user_id: int, exp_amount: int):
     finally:
         cursor.close()
         conn.close()
+
+import sqlite3
+
+def get_db_connection(db_name="game.db"):
+    conn = sqlite3.connect(db_name)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# 🍳 完整 21 道豪華料理食譜資料庫
+RECIPE_DATABASE = {
+    # --- 1等料理台可製作 ---
+    "義大利麵": {
+        "station_level": 1,
+        "ingredients": {"小麥": 2, "生肉": 1, "蔬菜": 1},
+        "output": "【料理】義大利麵",
+        "description": "經典的西式主食，恢復 40 點生命與 20 點魔力。"
+    },
+    "麵包": {
+        "station_level": 1,
+        "ingredients": {"小麥": 3},
+        "output": "【料理】麵包",
+        "description": "基礎的烘焙食品，恢復 25 點生命。"
+    },
+    "香煎魚": {
+        "station_level": 1,
+        "ingredients": {"鮮魚": 1, "香料": 1},
+        "output": "【料理】香煎魚",
+        "description": "外酥內嫩的鮮魚料理，恢復 35 點生命。"
+    },
+    "壽司": {
+        "station_level": 1,
+        "ingredients": {"米": 2, "鮮魚": 1},
+        "output": "【料理】壽司",
+        "description": "爽口的日式美味，恢復 30 點生命與 15 點魔力。"
+    },
+    "什錦飯": {
+        "station_level": 1,
+        "ingredients": {"米": 2, "生肉": 1, "蔬菜": 2},
+        "output": "【料理】什錦飯",
+        "description": "料多實在的鄉村什錦飯，恢復 50 點生命。"
+    },
+    "熱狗麵包": {
+        "station_level": 1,
+        "ingredients": {"小麥": 2, "生肉": 1},
+        "output": "【料理】熱狗麵包",
+        "description": "方便攜帶的速食點心，恢復 30 點生命。"
+    },
+    "紅燒肉": {
+        "station_level": 1,
+        "ingredients": {"五花肉": 2, "香料": 1},
+        "output": "【料理】紅燒肉",
+        "description": "濃郁誘人的傳統紅燒肉，恢復 60 點生命。"
+    },
+    "包子": {
+        "station_level": 1,
+        "ingredients": {"小麥": 2, "生肉": 1},
+        "output": "【料理】包子",
+        "description": "熱騰騰的肉包，恢復 35 點生命。"
+    },
+    "麵疙瘩": {
+        "station_level": 1,
+        "ingredients": {"小麥": 3, "蔬菜": 1},
+        "output": "【料理】麵疙瘩",
+        "description": "Q彈有嚼勁的家常麵疙瘩，恢復 30 點生命。"
+    },
+    "蔥油餅": {
+        "station_level": 1,
+        "ingredients": {"小麥": 3, "蔥": 2},
+        "output": "【料理】蔥油餅",
+        "description": "香氣四溢的酥脆蔥油餅，恢復 30 點生命。"
+    },
+    "咖哩飯": {
+        "station_level": 1,
+        "ingredients": {"米": 2, "蔬菜": 2, "生肉": 1},
+        "output": "【料理】咖哩飯",
+        "description": "濃郁微辣的經典咖哩，恢復 55 點生命與 20 點魔力。"
+    },
+
+    # --- 2等料理台可製作 ---
+    "千層蛋糕": {
+        "station_level": 2,
+        "ingredients": {"小麥": 3, "雞蛋": 2, "牛奶": 2},
+        "output": "【料理】千層蛋糕",
+        "description": "層次豐富的精緻甜點，大幅恢復 60 點魔力。"
+    },
+    "香檳氣泡水": {
+        "station_level": 2,
+        "ingredients": {"水果": 3},
+        "output": "【料理】香檳氣泡水",
+        "description": "清涼解渴的特調氣泡飲，恢復 40 點魔力。"
+    },
+    "泡芙": {
+        "station_level": 2,
+        "ingredients": {"小麥": 2, "雞蛋": 2, "牛奶": 1},
+        "output": "【料理】泡芙",
+        "description": "爆漿口感的甜點，恢復 45 點魔力。"
+    },
+    "燉飯": {
+        "station_level": 2,
+        "ingredients": {"米": 3, "生肉": 1, "蔬菜": 2},
+        "output": "【料理】燉飯",
+        "description": "濃郁香滑的義式燉飯，恢復 70 點生命。"
+    },
+    "舒芙蕾": {
+        "station_level": 2,
+        "ingredients": {"雞蛋": 3, "牛奶": 2},
+        "output": "【料理】舒芙蕾",
+        "description": "入口即化的雲朵蛋糕，恢復 50 點魔力。"
+    },
+    "披薩": {
+        "station_level": 2,
+        "ingredients": {"小麥": 3, "生肉": 2, "蔬菜": 1},
+        "output": "【料理】披薩",
+        "description": "牽絲美味的起司肉餅披薩，恢復 80 點生命。"
+    },
+    "白醬意麵": {
+        "station_level": 2,
+        "ingredients": {"小麥": 2, "牛奶": 2, "生肉": 1},
+        "output": "【料理】白醬意麵",
+        "description": "奶香四溢的白醬義大利麵，恢復 65 點生命與 30 點魔力。"
+    },
+    "東坡肉": {
+        "station_level": 2,
+        "ingredients": {"五花肉": 3, "香料": 2},
+        "output": "【料理】東坡肉",
+        "description": "肥而不膩的頂級東坡肉，恢復 90 點生命。"
+    },
+
+    # --- 3等料理台可製作 ---
+    "紅酒燉牛肉": {
+        "station_level": 3,
+        "ingredients": {"高級肉塊": 2, "蔬菜": 3, "香料": 1},
+        "output": "【料理】紅酒燉牛肉",
+        "description": "高級主廚料理，極大幅度恢復 120 點生命與 50 點魔力！"
+    },
+    "牛肉麵": {
+        "station_level": 3,
+        "ingredients": {"小麥": 2, "高級肉塊": 2, "蔬菜": 1},
+        "output": "【料理】牛肉麵",
+        "description": "熬煮多時的濃郁牛肉麵，恢復 100 點生命與 40 點魔力。"
+    }
+}
+
+# ⬆️ 料理台升級所需消耗
+COOKING_STATION_UPGRADE_COST = {
+    2: {"gold": 1000, "item": "鐵塊", "qty": 5},
+    3: {"gold": 5000, "item": "魔導金屬", "qty": 3}
+}
+
+def init_db(db_name="game.db"):
+    conn = get_db_connection(db_name)
+    cursor = conn.cursor()
+
+    # 1. 玩家主表（包含料理台等級 cooking_level）
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS players (
+            user_id INTEGER PRIMARY KEY,
+            role_name TEXT,
+            hp INTEGER,
+            max_hp INTEGER,
+            mp INTEGER DEFAULT 50,
+            atk INTEGER,
+            def INTEGER,
+            weapon_atk INTEGER DEFAULT 0,
+            armor_def INTEGER DEFAULT 0,
+            gold INTEGER DEFAULT 100,
+            level INTEGER DEFAULT 1,
+            exp INTEGER DEFAULT 0,
+            cooking_level INTEGER DEFAULT 1
+        )
+    """)
+
+    # 2. 玩家背包表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS inventory (
+            user_id INTEGER,
+            item_name TEXT,
+            quantity INTEGER,
+            PRIMARY KEY (user_id, item_name)
+        )
+    """)
+
+    # 3. 農場土地表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS farm_plots (
+            user_id INTEGER,
+            plot_index INTEGER,
+            crop_name TEXT,
+            ready_timestamp REAL,
+            status TEXT DEFAULT 'empty',
+            PRIMARY KEY (user_id, plot_index)
+        )
+    """)
+
+    # 4. 玩家已解鎖食譜表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS player_recipes (
+            user_id INTEGER,
+            recipe_name TEXT,
+            PRIMARY KEY (user_id, recipe_name)
+        )
+    """)
+
+    # 5. 🌟 牧場動物表（新增）
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ranch_animals (
+            user_id INTEGER,
+            animal_index INTEGER,
+            animal_type TEXT,
+            feed_timestamp REAL,
+            status TEXT DEFAULT 'ready',
+            PRIMARY KEY (user_id, animal_index)
+        )
+    """)
+
+    conn.commit()
+    cursor.close()
+    conn.close()
