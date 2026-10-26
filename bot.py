@@ -4,6 +4,10 @@ import os
 import asyncio
 from keep_alive import keep_alive
 from db import get_db_connection
+from db import init_db
+
+# 在機器人啟動時執行
+init_db()
 
 intents = discord.Intents.default()
 intents.message_content = True
