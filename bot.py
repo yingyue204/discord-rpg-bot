@@ -3,10 +3,9 @@ from discord.ext import commands
 import os
 import asyncio
 from keep_alive import keep_alive
-from db import get_db_connection
 from db import init_db
 
-# 在機器人啟動時執行
+# 1. 統一在啟動時呼叫 db.py 的完整初始化（會自動包含所有欄位與防護）
 init_db()
 
 intents = discord.Intents.default()
@@ -14,40 +13,6 @@ intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
-
-def init_global_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # 建立玩家資料表
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS players (
-            user_id INTEGER PRIMARY KEY,
-            role TEXT,
-            hp INTEGER DEFAULT 100,
-            max_hp INTEGER DEFAULT 100,
-            atk INTEGER DEFAULT 25,
-            def INTEGER DEFAULT 10,
-            speed INTEGER DEFAULT 20,
-            gold INTEGER DEFAULT 100
-        )
-    """)
-    
-    # 建立背包資料表
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS inventory (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            item_name TEXT,
-            quantity INTEGER,
-            UNIQUE(user_id, item_name)
-        )
-    """)
-    
-    conn.commit()
-    cursor.close()
-    conn.close()
-    print("✅ 資料庫結構初始化/檢查完成！")
 
 async def load_extensions():
     for filename in os.listdir("./cogs"):
@@ -57,22 +22,12 @@ async def load_extensions():
 
 @bot.event
 async def on_ready():
-    init_global_db()
-    try:
-        synced = await bot.tree.sync()
-        print(f"✅ 已成功同步 {len(synced)} 個斜線指令！")
-    except Exception as e:
-        print(f"⚠️ 指令同步失敗: {e}")
-    print(f"✅ 機器人已成功線上登入：{bot.user}")
-
-@bot.event
-async def on_ready():
     # 同步所有斜線指令到 Discord
     try:
         synced = await bot.tree.sync()
         print(f"✅ 已成功同步 {len(synced)} 個斜線指令！")
     except Exception as e:
-        print(e)
+        print(f"⚠️ 指令同步失敗: {e}")
     print(f"✅ 機器人已成功線上登入：{bot.user}")
 
 async def main():
