@@ -7,7 +7,7 @@ class Bag(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="bag", description="查看你的隨身背包與道具")
+    @app_commands.command(name="打開背包", description="查看你的隨身背包與道具")
     async def bag(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
@@ -42,7 +42,7 @@ class Bag(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ 發生錯誤：`{e}`", ephemeral=True)
 
-    @app_commands.command(name="open_chest", description="開啟背包中的神秘寶箱獲得裝備")
+    @app_commands.command(name="開啟寶箱", description="開啟背包中的神秘寶箱獲得裝備")
     async def open_chest(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
@@ -69,7 +69,7 @@ class Bag(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ 開啟寶箱時發生錯誤：`{e}`", ephemeral=True)
 
-    @app_commands.command(name="use", description="使用背包中的消耗道具（例如：生命藥水）")
+    @app_commands.command(name="使用道具", description="使用背包中的消耗道具（例如：生命藥水）")
     @app_commands.describe(item_name="要使用的道具名稱")
     async def use_item(self, interaction: discord.Interaction, item_name: str):
         await interaction.response.defer(ephemeral=True)

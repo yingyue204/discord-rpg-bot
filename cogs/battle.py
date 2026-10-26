@@ -186,7 +186,7 @@ class Battle(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="battle", description="在荒野中尋找野生怪物進行主動戰鬥")
+    @app_commands.command(name="打怪", description="在荒野中尋找野生怪物進行主動戰鬥")
     async def battle(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id

@@ -8,7 +8,7 @@ class Adventure(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="adventure", description="前往未知區域進行快速冒險與搜刮（隨機遭遇突發怪物與寶箱）")
+    @app_commands.command(name="冒險", description="前往未知區域進行快速冒險與搜刮（隨機遭遇突發怪物與寶箱）")
     async def adventure(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id

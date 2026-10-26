@@ -840,3 +840,39 @@ def buy_market_item(buyer_id, listing_id):
     finally:
         cursor.close()
         conn.close()
+
+def list_market_item(user_id, item_name, price, quantity):
+    """將玩家背包的道具上架至市場"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # 1. 檢查玩家背包是否有足夠的該道具
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        inv = cursor.fetchone()
+        
+        if not inv or inv[0] < quantity:
+            return False, f"❌ 你的背包中沒有足夠的 **{item_name}**（現有數量：`{inv[0] if inv else 0}`）！"
+            
+        if price <= 0 or quantity <= 0:
+            return False, "❌ 價格與數量必須大於 0！"
+
+        # 2. 扣除或刪除背包中的道具
+        if inv[0] == quantity:
+            cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        else:
+            cursor.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?", (quantity, user_id, item_name))
+
+        # 3. 寫入市場上架資料表
+        cursor.execute("""
+            INSERT INTO market_listings (seller_id, item_name, price, quantity)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, item_name, price, quantity))
+
+        conn.commit()
+        return True, f"✅ 成功上架 **{item_name}** x `{quantity}`！單價：`{price} G`。"
+    except Exception as e:
+        conn.rollback()
+        return False, f"❌ 上架發生錯誤：`{e}`"
+    finally:
+        cursor.close()
+        conn.close()

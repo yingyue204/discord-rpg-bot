@@ -161,7 +161,7 @@ class Roles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="setup_roles", description="【管理員】發送職業介紹與選擇面板至頻道")
+    @app_commands.command(name="職業介紹以及選擇", description="【管理員】發送職業介紹與選擇面板至頻道")
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_roles(self, interaction: discord.Interaction):
         embed = discord.Embed(

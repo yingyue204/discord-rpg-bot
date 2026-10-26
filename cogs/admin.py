@@ -7,7 +7,7 @@ class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="reset_player", description="【管理員】重置指定玩家的遊戲資料與身分組")
+    @app_commands.command(name="重製玩家資料", description="【管理員】重置指定玩家的遊戲資料與身分組")
     @app_commands.describe(member="要重置的玩家")
     @app_commands.checks.has_permissions(administrator=True)
     async def reset_player(self, interaction: discord.Interaction, member: discord.Member):

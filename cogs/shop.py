@@ -16,7 +16,7 @@ class Shop(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="shop", description="查看新手村商店與商品介紹")
+    @app_commands.command(name="系統商店", description="查看新手村商店與商品介紹")
     async def shop(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
@@ -35,7 +35,7 @@ class Shop(commands.Cog):
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="buy", description="從商店購買指定道具")
+    @app_commands.command(name="購買", description="從商店購買指定道具")
     @app_commands.describe(item_name="想購買的道具名稱", quantity="購買數量（預設 1 個）")
     async def buy(self, interaction: discord.Interaction, item_name: str, quantity: int = 1):
         await interaction.response.defer(ephemeral=True)

@@ -61,7 +61,7 @@ class Explore(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="explore", description="選擇前往不同的區域進行冒險與搜刮")
+    @app_commands.command(name="前往區域冒險", description="選擇前往不同的區域進行冒險與搜刮")
     @app_commands.choices(location=[
         app_commands.Choice(name="新手廢墟 (安全，適合初期的探索)", value="新手廢墟"),
         app_commands.Choice(name="廢棄實驗室 (中等風險，報酬較高)", value="廢棄實驗室"),

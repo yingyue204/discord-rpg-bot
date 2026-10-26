@@ -7,7 +7,7 @@ class Equipment(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="equip", description="從背包中穿戴指定的武器或防具")
+    @app_commands.command(name="穿戴裝備", description="從背包中穿戴指定的武器或防具")
     @app_commands.describe(item_name="你想穿戴的裝備完整名稱（例如：【精良】光束劍）")
     async def equip(self, interaction: discord.Interaction, item_name: str):
         await interaction.response.defer(ephemeral=True)

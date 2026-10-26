@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from db import get_active_sellers, get_listings_by_seller, buy_market_item
+from db import get_active_sellers, get_listings_by_seller, buy_market_item, list_market_item
 import traceback
 
 class SellerSelect(discord.ui.Select):
@@ -86,11 +86,10 @@ class MarketMainView(discord.ui.View):
         super().__init__(timeout=60)
         self.user_id = user_id
         
-        # 直接從 db 載入其他玩家選單
         sellers = get_active_sellers(user_id)
         self.add_item(SellerSelect(sellers))
 
-    @discord.ui.button(label="🏷️ 我要上架商品", style=discord.ButtonStyle.success, row=1)
+    @discord.ui.button(label="🏷️ 我要上架商品提示", style=discord.ButtonStyle.success, row=1)
     async def list_item_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("💡 請使用指令 `/market sell <道具名稱> <價格> <數量>` 來將道具上架至市場！", ephemeral=True)
 
@@ -98,21 +97,38 @@ class Market(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="market", description="開啟玩家自由市場")
-    async def market(self, interaction: discord.Interaction):
+    # 建立 /market 指令群組
+    market_group = app_commands.Group(name="商場", description="玩家自由市場系統")
+
+    @market_group.command(name="瀏覽商場", description="開啟並瀏覽玩家自由市場")
+    async def market_open(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        
         try:
             embed = discord.Embed(
                 title="🛒 【自由玩家市場】",
-                description="歡迎來到玩家自由市場！\n在這裡你可以跟其他特務進行自由貿易。\n\n🛡️ **安全機制**：系統已自動過濾掉你自己的商店，防止洗錢行為。",
+                description="歡迎來到玩家自由市場！\n在這裡你可以跟其他特務進行自由貿易。\n\n🛡️ **安全機制**：系統已自動過濾掉你自己的商店。",
                 color=discord.Color.blue()
             )
             embed.set_footer(text="💡 請從下方選單選擇你想逛的玩家商店。")
             
             view = MarketMainView(interaction.user.id)
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-        
+        except Exception as e:
+            traceback.print_exc()
+            await interaction.followup.send(f"❌ 發生系統錯誤：`{e}`", ephemeral=True)
+
+    @market_group.command(name="販賣", description="將背包中的道具上架至自由市場")
+    @app_commands.describe(item_name="要上架的道具名稱", price="販售總價格或單價 (G)", quantity="上架數量")
+    async def market_sell(self, interaction: discord.Interaction, item_name: str, price: int, quantity: int):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            success, message = list_market_item(interaction.user.id, item_name, price, quantity)
+            embed = discord.Embed(
+                title="🏷️ 【市場上架結果】",
+                description=message,
+                color=discord.Color.green() if success else discord.Color.red()
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
         except Exception as e:
             traceback.print_exc()
             await interaction.followup.send(f"❌ 發生系統錯誤：`{e}`", ephemeral=True)
