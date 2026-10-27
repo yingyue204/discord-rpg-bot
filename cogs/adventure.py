@@ -10,118 +10,125 @@ class Adventure(commands.Cog):
 
     @app_commands.command(name="冒險", description="前往未知區域進行快速冒險與搜刮（隨機遭遇突發怪物與寶箱）")
     async def adventure(self, interaction: discord.Interaction):
+        # 務必第一步 defer，防止 Discord 逾時
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
 
-        # 1. 從資料庫取得玩家的當前血量與體力
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT hp, max_hp, stamina, max_stamina FROM players WHERE user_id = ?", (user_id,))
-        player_data = cursor.fetchone()
+        
+        try:
+            # 1. 從資料庫取得玩家的當前血量與體力
+            cursor.execute("SELECT hp, max_hp, stamina, max_stamina FROM players WHERE user_id = ?", (user_id,))
+            player_data = cursor.fetchone()
 
-        if not player_data:
-            cursor.close()
-            conn.close()
-            await interaction.followup.send("⚠️ 你尚未選擇身份！請先使用 `/setup_roles` 選擇職業。", ephemeral=True)
-            return
+            if not player_data:
+                await interaction.followup.send("⚠️ 你尚未選擇身份！請先使用 `/setup_roles` 選擇職業。", ephemeral=True)
+                return
 
-        hp, max_hp, stamina, max_stamina = player_data
+            hp, max_hp, stamina, max_stamina = player_data
 
-        # 2. 🏥 檢查玩家是否處於血量歸零／倒地狀態（直接送診所）
-        if hp <= 0:
-            new_hp = 50  # 診所急救恢復的血量
-            cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, user_id))
+            # 2. 🏥 檢查玩家是否處於血量歸零／倒地狀態（直接送診所）
+            if hp <= 0:
+                new_hp = 50  # 診所急救恢復的血量
+                cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, user_id))
+                conn.commit()
+
+                embed = discord.Embed(
+                    title="🏥 【新手村診所·緊急送醫】",
+                    description=f"你目前處於倒地狀態，無法進行冒險！已被緊急送往新手村診所治療。\n💖 當前血量已恢復至：`{new_hp}` / `{max_hp}`",
+                    color=discord.Color.red()
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                return
+
+            # 3. ⚡ 檢查體力是否足夠（每次探索消耗 15 點體力）
+            stamina_cost = 15
+            if stamina < stamina_cost:
+                embed = discord.Embed(
+                    title="⚡ 【體力耗盡】",
+                    description=f"你的體力不足以支撐這次探索！\n當前體力：`{stamina}/{max_stamina}` (需要 `{stamina_cost}` 點)\n\n💡 請食用食物或等待體力恢復，才能繼續冒險！",
+                    color=discord.Color.orange()
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                return
+
+            # 4. 扣除體力並更新至資料庫
+            new_stamina = stamina - stamina_cost
+            cursor.execute("UPDATE players SET stamina = ? WHERE user_id = ?", (new_stamina, user_id))
             conn.commit()
-            cursor.close()
-            conn.close()
 
-            embed = discord.Embed(
-                title="🏥 【新手村診所·緊急送醫】",
-                description=f"你目前處於倒地狀態，無法進行冒險！已被緊急送往新手村診所治療。\n💖 當前血量已恢復至：`{new_hp}` / `{max_hp}`",
-                color=discord.Color.red()
-            )
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            return
+            # ⚔️ 25% 機率在冒險途中突發遭遇野生怪物！
+            encounter_ambush = random.random() < 0.25
+            if encounter_ambush:
+                # 提前關閉連線，避免在跳轉戰鬥模組時佔用資料庫
+                cursor.close()
+                conn.close()
 
-        # 3. ⚡ 檢查體力是否足夠（每次探索消耗 15 點體力）
-        stamina_cost = 15
-        if stamina < stamina_cost:
-            cursor.close()
-            conn.close()
-            embed = discord.Embed(
-                title="⚡ 【體力耗盡】",
-                description=f"你的體力不足以支撐這次探索！\n當前體力：`{stamina}/{max_stamina}` (需要 `{stamina_cost}` 點)\n\n💡 請食用食物或等待體力恢復，才能繼續冒險！",
-                color=discord.Color.orange()
-            )
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            return
+                from cogs.battle import BattleChoiceView
 
-        # 4. 扣除體力並更新至資料庫
-        new_stamina = stamina - stamina_cost
-        cursor.execute("UPDATE players SET stamina = ? WHERE user_id = ?", (new_stamina, user_id))
-        conn.commit()
-        cursor.close()
-        conn.close()
+                monster_names = ["廢土伏擊者", "迷路防禦機械", "暴走掠奪者"]
+                monster_name = random.choice(monster_names)
+                monster_hp = random.randint(30, 60)
+                monster_atk = random.randint(6, 16)
 
-        # ⚔️ 25% 機率在冒險途中突發遭遇野生怪物！
-        encounter_ambush = random.random() < 0.25
-        if encounter_ambush:
-            # 🌟 改在這裡進行區域導入，避開頂層循環載入問題
-            from cogs.battle import BattleChoiceView
+                embed = discord.Embed(
+                    title="⚡ 【冒險突發狀況！遭遇敵人伏擊！】",
+                    description="你在搜刮廢墟時不小心驚動了潛伏的怪物，必須立刻做出反應！（此戰鬥不消耗 MP）",
+                    color=discord.Color.red()
+                )
+                embed.add_field(name="🤖 突發怪物", value=f"**{monster_name}**", inline=True)
+                embed.add_field(name="❤️ 血量", value=f"`{monster_hp}` HP", inline=True)
+                embed.add_field(name="⚔️ 攻擊力", value=f"`{monster_atk}` ATK", inline=True)
+                embed.set_footer(text="💡 擊敗突發敵人有更高的寶箱掉落機會！60秒未操作將自動過期。")
 
-            monster_names = ["廢土伏擊者", "迷路防禦機械", "暴走掠奪者"]
-            monster_name = random.choice(monster_names)
-            monster_hp = random.randint(30, 60)
-            monster_atk = random.randint(6, 16)
+                view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk, is_adventure_ambush=True)
+                sent_message = await interaction.followup.send(embed=embed, view=view)
+                view.message = sent_message
+                return
 
-            embed = discord.Embed(
-                title="⚡ 【冒險突發狀況！遭遇敵人伏擊！】",
-                description="你在搜刮廢墟時不小心驚動了潛伏的怪物，必須立刻做出反應！（此戰鬥不消耗 MP）",
-                color=discord.Color.red()
-            )
-            embed.add_field(name="🤖 突發怪物", value=f"**{monster_name}**", inline=True)
-            embed.add_field(name="❤️ 血量", value=f"`{monster_hp}` HP", inline=True)
-            embed.add_field(name="⚔️ 攻擊力", value=f"`{monster_atk}` ATK", inline=True)
-            embed.set_footer(text="💡 擊敗突發敵人有更高的寶箱掉落機會！60秒未操作將自動過期。")
+            # 🎒 平安搜刮邏輯
+            found_gold = random.randint(5, 15)
+            got_chest = random.random() < 0.1
+            if got_chest:
+                found_item = "神秘寶箱"
+            else:
+                found_item = random.choice(["生命藥水", "急救包", "鐵劍碎片"])
 
-            view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk, is_adventure_ambush=True)
-            sent_message = await interaction.followup.send(embed=embed, view=view)
-            view.message = sent_message
-            return
+            cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, found_item))
+            item_row = cursor.fetchone()
 
-        # 🎒 平安搜刮邏輯
-        found_gold = random.randint(5, 15)
+            if item_row:
+                cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, found_item))
+            else:
+                cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, found_item))
 
-        # 冒險獲得寶箱的機率 (10%)
-        got_chest = random.random() < 0.1
-        if got_chest:
-            found_item = "神秘寶箱"
-        else:
-            found_item = random.choice(["生命藥水", "急救包", "鐵劍碎片"])
+            cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (found_gold, user_id))
+            conn.commit()
 
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, found_item))
-        item_row = cursor.fetchone()
+            embed = discord.Embed(title="🛡️ 【冒險搜刮成功】", color=discord.Color.green())
+            if got_chest:
+                embed.add_field(name="🎁 驚喜發現", value="**✨ 神秘寶箱 x 1**（極低機率幸運獲得！）", inline=True)
+            else:
+                embed.add_field(name="📦 獲得道具", value=f"**{found_item}** x `1`", inline=True)
 
-        if item_row:
-            cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, found_item))
-        else:
-            cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, found_item))
+            embed.add_field(name="💰 獲得金幣", value=f"**+{found_gold} G**", inline=True)
+            await interaction.followup.send(embed=embed)
 
-        cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (found_gold, user_id))
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        embed = discord.Embed(title="🛡️ 【冒險搜刮成功】", color=discord.Color.green())
-        if got_chest:
-            embed.add_field(name="🎁 驚喜發現", value="**✨ 神秘寶箱 x 1**（極低機率幸運獲得！）", inline=True)
-        else:
-            embed.add_field(name="📦 獲得道具", value=f"**{found_item}** x `1`", inline=True)
-
-        embed.add_field(name="💰 獲得金幣", value=f"**+{found_gold} G**", inline=True)
-        await interaction.followup.send(embed=embed)
+        except Exception as e:
+            conn.rollback()
+            print(f"❌ 冒險指令發生錯誤: {e}")
+            try:
+                await interaction.followup.send(f"❌ 冒險過程發生未預期的錯誤：`{e}`", ephemeral=True)
+            except:
+                pass
+        finally:
+            # 🛡️ 確保無論成功或失敗，資料庫連線絕對會被釋放！
+            try:
+                cursor.close()
+                conn.close()
+            except:
+                pass
 
 async def setup(bot):
     await bot.add_cog(Adventure(bot))
