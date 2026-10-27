@@ -46,10 +46,10 @@ class RanchView(discord.ui.View):
                     left = int(ready_time - now)
                     desc += f"柵欄 `{i}`: 🐂 **{aname}** ➔ ⏳ 成長中 (剩餘 `{left}s`)\n"
             else:
-                desc += f"柵欄 `{i}`: 📭 **(空柵欄 - 可購入動物)**\n"
+                desc += f"柵欄 `{i}`: 📭 **(空柵欄 - 可用 `/購買動物` 購入)**\n"
 
         embed = discord.Embed(title="🏡 【牧場管理中心】", description=desc, color=discord.Color.green())
-        embed.set_footer(text="💡 使用下方按鈕進行收穫或購買動物。")
+        embed.set_footer(text="💡 使用下方按鈕進行收穫或返回。")
         await interaction.response.edit_message(embed=embed, view=self)
 
     @discord.ui.button(label="🌾 收穫所有成熟產物", style=discord.ButtonStyle.primary)
@@ -103,15 +103,8 @@ class Ranch(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="購買動物", description="在牧場空柵欄中購入並飼養動物")
-    @app_commands.rename(plot_index="柵欄編號", animal_type="動物種類")  # 🌟 加上這一行把黑框英文改成中文
-    @app_commands.choices(animal_type=[
-        app_commands.Choice(name="乳牛 (產出:牛奶 / 300G)", value="乳牛"),
-        app_commands.Choice(name="肉牛 (產出:高級肉塊 / 400G)", value="肉牛"),
-        app_commands.Choice(name="豬 (產出:五花肉 / 250G)", value="豬"),
-        app_commands.Choice(name="雞 (產出:雞蛋 / 150G)", value="雞")
-    ])
-    async def buy_animal(self, interaction: discord.Interaction, plot_index: int, animal_type: str):
+    @app_commands.command(name="牧場", description="開啟私人牧場管理中心，查看動物狀態與收穫產物")
+    async def ranch(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
 
@@ -136,41 +129,49 @@ class Ranch(commands.Cog):
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     @app_commands.command(name="購買動物", description="在牧場空柵欄中購入並飼養動物")
-    @app_commands.choices(animal_type=[
+    @app_commands.describe(柵欄編號="牧場的欄位編號 (1~4)", 動物種類="想購買的動物名稱")
+    @app_commands.choices(動物種類=[
         app_commands.Choice(name="乳牛 (產出:牛奶 / 300G)", value="乳牛"),
         app_commands.Choice(name="肉牛 (產出:高級肉塊 / 400G)", value="肉牛"),
         app_commands.Choice(name="豬 (產出:五花肉 / 250G)", value="豬"),
         app_commands.Choice(name="雞 (產出:雞蛋 / 150G)", value="雞")
     ])
-    async def buy_animal(self, interaction: discord.Interaction, plot_index: int, animal_type: str):
+    async def buy_animal(self, interaction: discord.Interaction, 柵欄編號: int, 動物種類: str):
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
 
-        if plot_index < 1 or plot_index > 4:
+        if 柵欄編號 < 1 or 柵欄編號 > 4:
             await interaction.followup.send("⚠️ 柵欄編號必須介於 1 到 4 之間！", ephemeral=True)
             return
 
-        cost = ANIMAL_TYPES[animal_type]["cost"]
+        cost = ANIMAL_TYPES[動物種類]["cost"]
 
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # 檢查金幣
-        cursor.execute("SELECT gold FROM players WHERE user_id = ?", (user_id,))
-        p = cursor.fetchone()
-        if not p or p["gold"] < cost:
+        # 檢查玩家與金幣
+        cursor.execute("SELECT role_name, gold FROM players WHERE user_id = ?", (user_id,))
+        player = cursor.fetchone()
+        
+        if not player or not player["role_name"]:
             cursor.close()
             conn.close()
-            await interaction.followup.send(f"❌ 購買 **{animal_type}** 需要 `{cost} G`，你的金幣不足！", ephemeral=True)
+            await interaction.followup.send("⚠️ 請先建立角色才能使用牧場！", ephemeral=True)
+            return
+
+        if player["gold"] < cost:
+            cursor.close()
+            conn.close()
+            await interaction.followup.send(f"❌ 購買 **{動物種類}** 需要 `{cost} G`，你的金幣不足！（目前有 `{player['gold']} G`）", ephemeral=True)
             return
 
         # 檢查該柵欄是否已有動物
-        cursor.execute("SELECT * FROM ranch_animals WHERE user_id = ? AND animal_index = ?", (user_id, plot_index))
+        cursor.execute("SELECT * FROM ranch_animals WHERE user_id = ? AND animal_index = ?", (user_id, 柵欄編號))
         existing = cursor.fetchone()
         if existing:
             cursor.close()
             conn.close()
-            await interaction.followup.send(f"⚠️ 柵欄 `{plot_index}` 已經有動物在裡面了！", ephemeral=True)
+            await interaction.followup.send(f"⚠️ 柵欄 `{柵欄編號}` 已經有動物在裡面了！", ephemeral=True)
             return
 
         # 扣除金幣並放入動物
@@ -178,13 +179,13 @@ class Ranch(commands.Cog):
         cursor.execute("""
             INSERT INTO ranch_animals (user_id, animal_index, animal_type, feed_timestamp, status)
             VALUES (?, ?, ?, ?, 'ready')
-        """, (user_id, plot_index, animal_type, time.time()))
+        """, (user_id, 柵欄編號, 動物種類, time.time()))
 
         conn.commit()
         cursor.close()
         conn.close()
 
-        await interaction.followup.send(f"✅ 成功花費 `{cost} G` 購入 **{animal_type}** 並安置在第 `{plot_index}` 個柵欄！", ephemeral=True)
+        await interaction.followup.send(f"✅ 成功花費 `{cost} G` 購入 **{動物種類}** 並安置在第 `{柵欄編號}` 個柵欄！", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Ranch(bot))

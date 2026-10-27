@@ -7,7 +7,7 @@ class Shop(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # 💡 購買商品的自動完成（從商店清單挑選）
+    # 💡 購買商品的自動完成
     async def buy_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         choices = []
         for name, data in SHOP_ITEMS.items():
@@ -16,7 +16,7 @@ class Shop(commands.Cog):
                 choices.append(app_commands.Choice(name=display_name, value=name))
         return choices[:25]
 
-    # 💡 販賣商品的自動完成（從玩家實際背包抓取）
+    # 💡 販賣商品的自動完成（抓取背包）
     async def sell_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         user_id = interaction.user.id
         conn = get_db_connection()
@@ -57,6 +57,7 @@ class Shop(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="購買", description="從系統商店中購買指定的道具、材料或素材")
+    @app_commands.rename(item_name="商品名稱", quantity="購買數量")
     @app_commands.describe(item_name="想購買的商品名稱", quantity="購買數量（預設為 1）")
     @app_commands.autocomplete(item_name=buy_autocomplete)
     async def buy_item(self, interaction: discord.Interaction, item_name: str, quantity: int = 1):
@@ -77,7 +78,8 @@ class Shop(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="賣出", description="將背包中的多餘道具、材料或魚獲販售給系統商店換取金幣")
-    @app_commands.describe(item_name="你想賣出的道具名稱（可從清單中選擇）", quantity="販售數量（預設為 1）")
+    @app_commands.rename(item_name="道具名稱", quantity="販售數量")
+    @app_commands.describe(item_name="你想賣出的道具名稱", quantity="販售數量（預設為 1）")
     @app_commands.autocomplete(item_name=sell_autocomplete)
     async def sell_item(self, interaction: discord.Interaction, item_name: str, quantity: int = 1):
         await interaction.response.defer(ephemeral=True)
