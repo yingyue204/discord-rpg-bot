@@ -688,56 +688,56 @@ CRAFT_RECIPES = {
     # ---------------- 🟡 傳說級裝備系列 (消耗：史詩裝備 + 極量鐵料 + 高階能量晶核) ----------------
     "【傳說級】終焉短刀": {
         "cost_gold": 1000,
-        "materials": {"【史詩】高震動短刀": 1, "鐵劍碎片": 70, "鐵礦石": 45, "高階能量晶核": 1},
+        "materials": {"【史詩】高震動短刀": 1, "鐵劍碎片": 70, "鐵塊": 4, "高階能量晶核": 4, "魔導金屬": 1},
         "type": "weapon",
         "bonus": 40,
         "desc": "消耗史詩短刀、極量鐵料與高階能量晶核的傳說短刀。"
     },
     "【傳說級】終焉光束劍": {
         "cost_gold": 1100,
-        "materials": {"【史詩】光束劍": 1, "鐵劍碎片": 80, "鐵礦石": 50, "高階能量晶核": 1},
+        "materials": {"【史詩】光束劍": 1, "鐵劍碎片": 80, "鐵塊": 5, "高階能量晶核": 5, "魔導金屬": 2},
         "type": "weapon",
         "bonus": 42,
         "desc": "切割一切的傳說級終焉光束劍。"
     },
     "【傳說級】毀滅電磁槍": {
         "cost_gold": 1200,
-        "materials": {"【史詩】電磁打擊槍": 1, "鐵劍碎片": 90, "鐵礦石": 55, "高階能量晶核": 1},
+        "materials": {"【史詩】電磁打擊槍": 1, "鐵劍碎片": 90, "鐵塊": 6, "高階能量晶核": 6, "魔導金屬": 3},
         "type": "weapon",
         "bonus": 45,
         "desc": "貫穿戰場的傳說級電磁神兵。"
     },
     "【傳說級】毀滅重型巨斧": {
         "cost_gold": 1300,
-        "materials": {"【史詩】重型巨斧": 1, "鐵劍碎片": 100, "鐵礦石": 60, "高階能量晶核": 1},
+        "materials": {"【史詩】重型巨斧": 1, "鐵劍碎片": 100, "鐵塊": 7, "高階能量晶核": 7, "魔導金屬": 4},
         "type": "weapon",
         "bonus": 50,
         "desc": "擁有神話級破壞力的傳說巨斧。"
     },
     "【傳說級】泰坦戰術護甲": {
         "cost_gold": 900,
-        "materials": {"【史詩】戰術護甲": 1, "鐵礦石": 50, "高階能量晶核": 1},
+        "materials": {"【史詩】戰術護甲": 1, "鐵塊": 5, "高階能量晶核": 1, "魔導金屬": 1},
         "type": "armor",
         "bonus": 30,
         "desc": "泰坦級防禦力的傳說戰術護甲。"
     },
     "【傳說級】脈衝防衛力場": {
         "cost_gold": 1000,
-        "materials": {"【史詩】納米防護服": 1, "鐵礦石": 55, "高階能量晶核": 1},
+        "materials": {"【史詩】納米防護服": 1, "鐵塊": 6, "高階能量晶核": 2, "魔導金屬": 2},
         "type": "armor",
         "bonus": 33,
         "desc": "展開自動脈衝防禦的傳說力場服。"
     },
     "【傳說級】絕對防禦重盾": {
         "cost_gold": 1100,
-        "materials": {"【史詩】合金重盾": 1, "鐵礦石": 60, "高階能量晶核": 1},
+        "materials": {"【史詩】合金重盾": 1, "鐵塊": 7, "高階能量晶核": 3, "魔導金屬": 3},
         "type": "armor",
         "bonus": 37,
         "desc": "號稱永不破裂的傳說重盾。"
     },
     "【傳說級】泰坦合金重裝": {
         "cost_gold": 1300,
-        "materials": {"【史詩】外骨骼裝甲": 1, "鐵礦石": 70, "高階能量晶核": 1},
+        "materials": {"【史詩】外骨骼裝甲": 1, "鐵塊": 8, "高階能量晶核": 4, "魔導金屬": 4},
         "type": "armor",
         "bonus": 42,
         "desc": "終極防禦型態的傳說級泰坦重裝。"
@@ -761,6 +761,18 @@ CRAFT_RECIPES = {
         "materials": {"中階能量晶核": 3},
         "type": "item",
         "desc": "消耗 3 顆中階能量晶核與 300 G合成的高階能量晶核"
+    },
+    "鐵塊": {
+        "cost_gold": 180,
+        "materials": {"鐵礦石": 27},
+        "type": "item",
+        "desc": "消耗 27 個鐵礦石與 180 G合成的鐵塊"
+    },
+    "魔導金屬": {
+        "cost_gold": 980,
+        "materials": {"鐵塊": 15, "高階能量晶核": 10},
+        "type": "item",
+        "desc": "消耗 15 個鐵塊、 10 顆高階能量晶核與 980 G合成的魔導金屬"
     }
 }
 
@@ -1062,10 +1074,21 @@ SHOP_ITEMS = {
     "魔力藥水": {"price": 40, "type": "consumable", "description": "補充精神力的藥劑，使用後恢復 20 點 MP。"},
     "能量飲料": {"price": 75, "type": "consumable", "description": "高科技提神飲料，使用後瞬間恢復 40 點 MP。"},
     "神秘寶箱": {"price": 200, "type": "special", "description": "內含各品質武器與防具的神秘寶箱。"},
+    
+    # 🌱 農場種子系列
+    "小麥種子": {"price": 10, "type": "seed", "description": "可以種植出小麥的基礎種子。"},
+    "番茄種子": {"price": 15, "type": "seed", "description": "可以種植出新鮮番茄的種子。"},
+    "高麗菜種子": {"price": 15, "type": "seed", "description": "可以種植出清脆高麗菜的種子。"},
+    "胡蘿蔔種子": {"price": 15, "type": "seed", "description": "可以種植出甜美胡蘿蔔的種子。"},
+    "蘋果種子": {"price": 20, "type": "seed", "description": "可以種植出多汁蘋果的種子。"},
+
+    # 🌾 原有材料與其他道具
     "小麥": {"price": 20, "type": "material", "description": "基礎烘焙與麵食原料。"},
-    "米": {"price": 25, "type": "material", "description": "香甜白米，製作壽司與飯類必備。"},
-    "蔬菜": {"price": 30, "type": "material", "description": "新鮮蔬菜，烹飪配料。"},
-    "水果": {"price": 35, "type": "material", "description": "多汁水果，用於甜點與氣泡水。"},
+    "米": {"price": 25, "type": "material", "description": "精製白米（也可在料理台由小麥加工製成）。"},
+    "番茄": {"price": 30, "type": "material", "description": "酸甜多汁的新鮮番茄。"},
+    "高麗菜": {"price": 30, "type": "material", "description": "清脆爽口的蔬菜。"},
+    "胡蘿蔔": {"price": 30, "type": "material", "description": "營養豐富的根莖蔬菜。"},
+    "蘋果": {"price": 35, "type": "material", "description": "香甜多汁的水果。"},
     "香料": {"price": 40, "type": "material", "description": "去腥提味的關鍵調味料。"},
     "蔥": {"price": 25, "type": "material", "description": "香氣十足的青蔥。"},
     "鮮魚": {"price": 50, "type": "material", "description": "新鮮漁獲。"},
@@ -1083,29 +1106,35 @@ shop_prices = {name: data["price"] for name, data in SHOP_ITEMS.items()}
 
 # ==================== 🍳 料理食譜與升級資料庫 ====================
 RECIPE_DATABASE = {
-    "義大利麵": {"station_level": 1, "ingredients": {"小麥": 2, "生肉": 1, "蔬菜": 1}, "output": "【料理】義大利麵", "description": "恢復 40 點生命與 20 點魔力。"},
+    # 🌾 小麥加工區（在料理台將小麥做成米）
+    "米": {"station_level": 1, "ingredients": {"小麥": 2}, "output": "米", "description": "在料理台將 2 個小麥加工研磨成 1 個米。"},
+
+    # 🍳 料理區 (Lv.1)
+    "義大利麵": {"station_level": 1, "ingredients": {"小麥": 2, "生肉": 1, "番茄": 1}, "output": "【料理】義大利麵", "description": "恢復 40 點生命與 20 點魔力。"},
     "麵包": {"station_level": 1, "ingredients": {"小麥": 3}, "output": "【料理】麵包", "description": "恢復 25 點生命。"},
     "香煎魚": {"station_level": 1, "ingredients": {"鮮魚": 1, "香料": 1}, "output": "【料理】香煎魚", "description": "恢復 35 點生命。"},
     "壽司": {"station_level": 1, "ingredients": {"米": 2, "鮮魚": 1}, "output": "【料理】壽司", "description": "恢復 30 點生命與 15 點魔力。"},
-    "什錦飯": {"station_level": 1, "ingredients": {"米": 2, "生肉": 1, "蔬菜": 2}, "output": "【料理】什錦飯", "description": "恢復 50 點生命。"},
+    "什錦飯": {"station_level": 1, "ingredients": {"米": 2, "生肉": 1, "高麗菜": 2}, "output": "【料理】什錦飯", "description": "恢復 50 點生命。"},
     "熱狗麵包": {"station_level": 1, "ingredients": {"小麥": 2, "生肉": 1}, "output": "【料理】熱狗麵包", "description": "恢復 30 點生命。"},
     "紅燒肉": {"station_level": 1, "ingredients": {"五花肉": 2, "香料": 1}, "output": "【料理】紅燒肉", "description": "恢復 60 點生命。"},
     "包子": {"station_level": 1, "ingredients": {"小麥": 2, "生肉": 1}, "output": "【料理】包子", "description": "恢復 35 點生命。"},
-    "麵疙瘩": {"station_level": 1, "ingredients": {"小麥": 3, "蔬菜": 1}, "output": "【料理】麵疙瘩", "description": "恢復 30 點生命。"},
+    "麵疙瘩": {"station_level": 1, "ingredients": {"小麥": 3, "番茄": 1}, "output": "【料理】麵疙瘩", "description": "恢復 30 點生命。"},
     "蔥油餅": {"station_level": 1, "ingredients": {"小麥": 3, "蔥": 2}, "output": "【料理】蔥油餅", "description": "恢復 30 點生命。"},
-    "咖哩飯": {"station_level": 1, "ingredients": {"米": 2, "蔬菜": 2, "生肉": 1}, "output": "【料理】咖哩飯", "description": "恢復 55 點生命與 20 點魔力。"},
+    "咖哩飯": {"station_level": 1, "ingredients": {"米": 2, "胡蘿蔔": 2, "生肉": 1}, "output": "【料理】咖哩飯", "description": "恢復 55 點生命與 20 點魔力。"},
 
+    # 🍳 料理區 (Lv.2)
     "千層蛋糕": {"station_level": 2, "ingredients": {"小麥": 3, "雞蛋": 2, "牛奶": 2}, "output": "【料理】千層蛋糕", "description": "恢復 60 點魔力。"},
-    "香檳氣泡水": {"station_level": 2, "ingredients": {"水果": 3}, "output": "【料理】香檳氣泡水", "description": "恢復 40 點魔力。"},
+    "香檳氣泡水": {"station_level": 2, "ingredients": {"蘋果": 3}, "output": "【料理】香檳氣泡水", "description": "恢復 40 點魔力。"},
     "泡芙": {"station_level": 2, "ingredients": {"小麥": 2, "雞蛋": 2, "牛奶": 1}, "output": "【料理】泡芙", "description": "恢復 45 點魔力。"},
-    "燉飯": {"station_level": 2, "ingredients": {"米": 3, "生肉": 1, "蔬菜": 2}, "output": "【料理】燉飯", "description": "恢復 70 點生命。"},
+    "燉飯": {"station_level": 2, "ingredients": {"米": 3, "生肉": 1, "高麗菜": 2}, "output": "【料理】燉飯", "description": "恢復 70 點生命。"},
     "舒芙蕾": {"station_level": 2, "ingredients": {"雞蛋": 3, "牛奶": 2}, "output": "【料理】舒芙蕾", "description": "恢復 50 點魔力。"},
-    "披薩": {"station_level": 2, "ingredients": {"小麥": 3, "生肉": 2, "蔬菜": 1}, "output": "【料理】披薩", "description": "恢復 80 點生命。"},
+    "披薩": {"station_level": 2, "ingredients": {"小麥": 3, "生肉": 2, "番茄": 1}, "output": "【料理】披薩", "description": "恢復 80 點生命。"},
     "白醬意麵": {"station_level": 2, "ingredients": {"小麥": 2, "牛奶": 2, "生肉": 1}, "output": "【料理】白醬意麵", "description": "恢復 65 點生命與 30 點魔力。"},
     "東坡肉": {"station_level": 2, "ingredients": {"五花肉": 3, "香料": 2}, "output": "【料理】東坡肉", "description": "恢復 90 點生命。"},
 
-    "紅酒燉牛肉": {"station_level": 3, "ingredients": {"高級肉塊": 2, "蔬菜": 3, "香料": 1}, "output": "【料理】紅酒燉牛肉", "description": "恢復 120 點生命與 50 點魔力！"},
-    "牛肉麵": {"station_level": 3, "ingredients": {"小麥": 2, "高級肉塊": 2, "蔬菜": 1}, "output": "【料理】牛肉麵", "description": "恢復 100 點生命與 40 點魔力。"}
+    # 🍳 料理區 (Lv.3)
+    "紅酒燉牛肉": {"station_level": 3, "ingredients": {"高級肉塊": 2, "胡蘿蔔": 2, "番茄": 1, "香料": 1}, "output": "【料理】紅酒燉牛肉", "description": "恢復 120 點生命與 50 點魔力！"},
+    "牛肉麵": {"station_level": 3, "ingredients": {"小麥": 2, "高級肉塊": 2, "蔥": 1}, "output": "【料理】牛肉麵", "description": "恢復 100 點生命與 40 點魔力。"}
 }
 
 COOKING_STATION_UPGRADE_COST = {
@@ -1412,7 +1441,7 @@ def reset_player_data(user_id: int):
     try:
         cursor.execute("DELETE FROM players WHERE user_id = ?", (user_id,))
         cursor.execute("DELETE FROM inventory WHERE user_id = ?", (user_id,))
-        cursor.execute("DELETE / FROM farm_plots WHERE user_id = ?", (user_id,))
+        cursor.execute("DELETE FROM farm_plots WHERE user_id = ?", (user_id,))  # 這裡原本多了一個 / 符號
         cursor.execute("DELETE FROM player_recipes WHERE user_id = ?", (user_id,))
         cursor.execute("DELETE FROM ranch_animals WHERE user_id = ?", (user_id,))
         conn.commit()
