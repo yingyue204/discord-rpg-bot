@@ -1244,6 +1244,45 @@ def buy_item_in_db(user_id: int, item_name: str, quantity: int):
         cursor.close()
         conn.close()
 
+# ==================== 💰 系統商店回收／販賣邏輯 ====================
+def sell_item_to_shop_in_db(user_id: int, item_name: str, quantity: int):
+    if quantity <= 0:
+        return False, "❌ 販賣數量必須大於 0！"
+    
+    # 計算回收價格：如果在商城的 SHOP_ITEMS 裡，回收價為買價折半；否則給予基礎回收價 10 G
+    base_price = shop_prices.get(item_name, 15)
+    sell_unit_price = max(1, int(base_price * 0.5))
+    total_earnings = sell_unit_price * quantity
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # 1. 檢查玩家背包是否有足夠的道具
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        inv = cursor.fetchone()
+        
+        if not inv or inv["quantity"] < quantity:
+            current_qty = inv["quantity"] if inv else 0
+            return False, f"❌ 背包中的 **{item_name}** 數量不足！目前擁有：`{current_qty}` 個。"
+
+        # 2. 扣除或刪除背包道具
+        if inv["quantity"] == quantity:
+            cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        else:
+            cursor.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?", (quantity, user_id, item_name))
+
+        # 3. 增加玩家金幣
+        cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (total_earnings, user_id))
+        
+        conn.commit()
+        return True, f"💰 成功將 **{item_name}** x `{quantity}` 販售給系統商店！\n✨ 獲得金幣：`+{total_earnings} G`（單價：{sell_unit_price} G）"
+    except Exception as e:
+        conn.rollback()
+        return False, f"❌ 販賣過程發生錯誤：`{e}`"
+    finally:
+        cursor.close()
+        conn.close()
+
 
 # ==================== 🌾 農場系統相關函數 ====================
 def get_player_farm(user_id):
