@@ -69,7 +69,6 @@ class Explore(commands.Cog):
     ])
     @app_commands.describe(location="你想前往的冒險區域")
     async def explore(self, interaction: discord.Interaction, location: str):
-        # 務必第一時間 defer，防止 Discord 逾時
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
 
@@ -77,7 +76,6 @@ class Explore(commands.Cog):
         cursor = conn.cursor()
 
         try:
-            # 1. 從資料庫取得玩家的職業、血量與體力
             cursor.execute("SELECT role_name, hp, max_hp, stamina, max_stamina FROM players WHERE user_id = ?", (user_id,))
             player_data = cursor.fetchone()
 
@@ -87,9 +85,8 @@ class Explore(commands.Cog):
 
             role_name, hp, max_hp, stamina, max_stamina = player_data
 
-            # 2. 🏥 檢查玩家是否處於血量歸零／倒地狀態（直接送診所）
             if hp <= 0:
-                new_hp = 50  # 診所急救恢復的血量
+                new_hp = 50
                 cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, user_id))
                 conn.commit()
 
@@ -101,7 +98,6 @@ class Explore(commands.Cog):
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 return
 
-            # 3. ⚡ 檢查體力是否足夠（每次探索消耗 15 點體力）
             stamina_cost = 15
             if stamina < stamina_cost:
                 embed = discord.Embed(
@@ -112,17 +108,13 @@ class Explore(commands.Cog):
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 return
 
-            # 4. 扣除體力並更新至資料庫
             new_stamina = stamina - stamina_cost
             cursor.execute("UPDATE players SET stamina = ? WHERE user_id = ?", (new_stamina, user_id))
             conn.commit()
 
-            # 取得該地圖的設定
             map_info = MAP_DATA.get(location, MAP_DATA["新手廢墟"])
 
-            # ⚔️ 依據地圖機率判定是否遭遇怪物伏擊
             if random.random() < map_info["monster_chance"]:
-                # 提前安全關閉連線，避免跳轉戰鬥介面時佔用資料庫
                 cursor.close()
                 conn.close()
 
@@ -139,7 +131,7 @@ class Explore(commands.Cog):
                     color=discord.Color.red()
                 )
                 embed.add_field(name="🤖 敵方目標", value=f"**{monster_name}**", inline=True)
-                embed.add_field(name="❤️ 血量", value=`{monster_hp}` HP", inline=True)
+                embed.add_field(name="❤️ 血量", value=f"`{monster_hp}` HP", inline=True)
                 embed.add_field(name="⚔️ 攻擊力", value=f"`{monster_atk}` ATK", inline=True)
                 embed.set_footer(text="💡 擊敗強敵可以獲得更豐富的戰利品獎勵！60秒未操作將自動過期。")
 
@@ -148,7 +140,6 @@ class Explore(commands.Cog):
                 view.message = sent_message
                 return
 
-            # 🎒 平安搜刮邏輯（隨機掉落物權重計算）
             found_gold = random.randint(map_info["gold_range"][0], map_info["gold_range"][1])
             
             items, weights = zip(*map_info["drops"])
@@ -179,7 +170,6 @@ class Explore(commands.Cog):
             except:
                 pass
         finally:
-            # 🛡️ 鐵布衫：確保連線與游標絕對會被關閉，絕不卡死
             try:
                 cursor.close()
                 conn.close()
