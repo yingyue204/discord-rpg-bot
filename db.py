@@ -1048,7 +1048,6 @@ def gain_player_exp(user_id: int, exp_amount: int):
         conn.close()
 
 import sqlite3
-import time
 
 def get_db_connection(db_name="game.db"):
     conn = sqlite3.connect(db_name, timeout=30.0)
@@ -1115,26 +1114,26 @@ COOKING_STATION_UPGRADE_COST = {
 }
 
 
-# ==================== 🛠️ 資料庫初始化函數 ====================
+# ==================== 🛠️ 資料庫初始化與欄位防護 ====================
 def init_db(db_name="game.db"):
     conn = get_db_connection(db_name)
     cursor = conn.cursor()
 
-    # 1. 玩家主表（明確包含 cooking_level）
+    # 1. 玩家主表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS players (
             user_id INTEGER PRIMARY KEY,
             role_name TEXT,
             level INTEGER DEFAULT 1,
             exp INTEGER DEFAULT 0,
-            hp INTEGER,
-            max_hp INTEGER,
-            mp INTEGER,
-            max_mp INTEGER,
-            stamina INTEGER,
-            max_stamina INTEGER,
-            atk INTEGER,
-            def INTEGER,
+            hp INTEGER DEFAULT 100,
+            max_hp INTEGER DEFAULT 100,
+            mp INTEGER DEFAULT 50,
+            max_mp INTEGER DEFAULT 50,
+            stamina INTEGER DEFAULT 100,
+            max_stamina INTEGER DEFAULT 100,
+            atk INTEGER DEFAULT 25,
+            def INTEGER DEFAULT 10,
             gold INTEGER DEFAULT 100,
             weapon_name TEXT,
             weapon_atk INTEGER DEFAULT 0,
@@ -1144,16 +1143,33 @@ def init_db(db_name="game.db"):
         )
     """)
 
-    # 🛡️ 雙重防護：自動檢查並補上可能缺少的欄位
+    # 🛡️ 自動檢查並補上任何可能缺少的欄位（防止舊資料庫報錯）
     cursor.execute("PRAGMA table_info(players)")
     columns = [column[1] for column in cursor.fetchall()]
     
-    if "level" not in columns:
-        cursor.execute("ALTER TABLE players ADD COLUMN level INTEGER DEFAULT 1")
-    if "exp" not in columns:
-        cursor.execute("ALTER TABLE players ADD COLUMN exp INTEGER DEFAULT 0")
-    if "cooking_level" not in columns:
-        cursor.execute("ALTER TABLE players ADD COLUMN cooking_level INTEGER DEFAULT 1")
+    required_columns = {
+        "role_name": "TEXT",
+        "level": "INTEGER DEFAULT 1",
+        "exp": "INTEGER DEFAULT 0",
+        "hp": "INTEGER DEFAULT 100",
+        "max_hp": "INTEGER DEFAULT 100",
+        "mp": "INTEGER DEFAULT 50",
+        "max_mp": "INTEGER DEFAULT 50",
+        "stamina": "INTEGER DEFAULT 100",
+        "max_stamina": "INTEGER DEFAULT 100",
+        "atk": "INTEGER DEFAULT 25",
+        "def": "INTEGER DEFAULT 10",
+        "gold": "INTEGER DEFAULT 100",
+        "weapon_name": "TEXT",
+        "weapon_atk": "INTEGER DEFAULT 0",
+        "armor_name": "TEXT",
+        "armor_def": "INTEGER DEFAULT 0",
+        "cooking_level": "INTEGER DEFAULT 1"
+    }
+    
+    for col_name, col_type in required_columns.items():
+        if col_name not in columns:
+            cursor.execute(f"ALTER TABLE players ADD COLUMN {col_name} {col_type}")
 
     # 2. 玩家背包表
     cursor.execute("""
@@ -1244,45 +1260,6 @@ def buy_item_in_db(user_id: int, item_name: str, quantity: int):
         cursor.close()
         conn.close()
 
-# ==================== 💰 系統商店回收／販賣邏輯 ====================
-def sell_item_to_shop_in_db(user_id: int, item_name: str, quantity: int):
-    if quantity <= 0:
-        return False, "❌ 販賣數量必須大於 0！"
-    
-    # 計算回收價格：如果在商城的 SHOP_ITEMS 裡，回收價為買價折半；否則給予基礎回收價 10 G
-    base_price = shop_prices.get(item_name, 15)
-    sell_unit_price = max(1, int(base_price * 0.5))
-    total_earnings = sell_unit_price * quantity
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        # 1. 檢查玩家背包是否有足夠的道具
-        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
-        inv = cursor.fetchone()
-        
-        if not inv or inv["quantity"] < quantity:
-            current_qty = inv["quantity"] if inv else 0
-            return False, f"❌ 背包中的 **{item_name}** 數量不足！目前擁有：`{current_qty}` 個。"
-
-        # 2. 扣除或刪除背包道具
-        if inv["quantity"] == quantity:
-            cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
-        else:
-            cursor.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?", (quantity, user_id, item_name))
-
-        # 3. 增加玩家金幣
-        cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (total_earnings, user_id))
-        
-        conn.commit()
-        return True, f"💰 成功將 **{item_name}** x `{quantity}` 販售給系統商店！\n✨ 獲得金幣：`+{total_earnings} G`（單價：{sell_unit_price} G）"
-    except Exception as e:
-        conn.rollback()
-        return False, f"❌ 販賣過程發生錯誤：`{e}`"
-    finally:
-        cursor.close()
-        conn.close()
-
 
 # ==================== 🌾 農場系統相關函數 ====================
 def get_player_farm(user_id):
@@ -1302,6 +1279,40 @@ def get_player_farm(user_id):
         cursor.close()
         conn.close()
 
+# ==================== 💰 系統商店回收／販賣邏輯 ====================
+def sell_item_to_shop_in_db(user_id: int, item_name: str, quantity: int):
+    if quantity <= 0:
+        return False, "❌ 販賣數量必須大於 0！"
+    
+    base_price = shop_prices.get(item_name, 15)
+    sell_unit_price = max(1, int(base_price * 0.5))
+    total_earnings = sell_unit_price * quantity
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        inv = cursor.fetchone()
+        
+        if not inv or inv["quantity"] < quantity:
+            current_qty = inv["quantity"] if inv else 0
+            return False, f"❌ 背包中的 **{item_name}** 數量不足！目前擁有：`{current_qty}` 個。"
+
+        if inv["quantity"] == quantity:
+            cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        else:
+            cursor.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?", (quantity, user_id, item_name))
+
+        cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (total_earnings, user_id))
+        
+        conn.commit()
+        return True, f"💰 成功將 **{item_name}** x `{quantity}` 販售給系統商店！\n✨ 獲得金幣：`+{total_earnings} G`（單價：{sell_unit_price} G）"
+    except Exception as e:
+        conn.rollback()
+        return False, f"❌ 販賣過程發生錯誤：`{e}`"
+    finally:
+        cursor.close()
+        conn.close()
 
 # ==================== 🍳 料理製作與升級邏輯 ====================
 def cook_recipe_in_db(user_id: int, recipe_name: str):
@@ -1401,7 +1412,7 @@ def reset_player_data(user_id: int):
     try:
         cursor.execute("DELETE FROM players WHERE user_id = ?", (user_id,))
         cursor.execute("DELETE FROM inventory WHERE user_id = ?", (user_id,))
-        cursor.execute("DELETE FROM farm_plots WHERE user_id = ?", (user_id,))
+        cursor.execute("DELETE / FROM farm_plots WHERE user_id = ?", (user_id,))
         cursor.execute("DELETE FROM player_recipes WHERE user_id = ?", (user_id,))
         cursor.execute("DELETE FROM ranch_animals WHERE user_id = ?", (user_id,))
         conn.commit()
