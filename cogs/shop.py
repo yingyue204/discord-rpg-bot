@@ -43,17 +43,19 @@ class Shop(commands.Cog):
 
     @app_commands.command(name="系統商店", description="開啟系統商店查看可購買的道具與材料")
     async def system_shop(self, interaction: discord.Interaction):
-        # 1. 第一時間 defer 防止逾時
         await interaction.response.defer(ephemeral=True)
         try:
-            embed = discord.Embed(
-                title="🛒 【系統商店】",
-                description="以下是目前販售的商品清單：\n請使用 `/購買` 或 `/賣出` 指令來進行交易！",
-                color=discord.Color.blue()
-            )
+            # 🌟 將所有商品整理成文字描述，避免超過 Embed 25 個欄位的限制
+            desc = "以下是目前販售的商品清單：\n請使用 `/購買` 或 `/賣出` 指令來進行交易！\n\n"
             
             for name, data in SHOP_ITEMS.items():
-                embed.add_field(name=f"{name} (`{data['price']} G`)", value=data["description"], inline=False)
+                desc += f"• **{name}** — `{data['price']} G`\n  └ *{data['description']}*\n"
+
+            embed = discord.Embed(
+                title="🛒 【系統商店】",
+                description=desc,
+                color=discord.Color.blue()
+            )
 
             await interaction.followup.send(embed=embed, ephemeral=True)
         except Exception as e:
