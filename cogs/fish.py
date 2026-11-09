@@ -47,11 +47,8 @@ class IdentityVCalibrationView(discord.ui.View):
         
         self.is_finished = False
         self.message = None
-        
-        # 綠色判定區設定（總共 10 格，例如第 4, 5, 6 格是綠色安全區）
         self.green_zones = [4, 5, 6]
         
-        # 指針初始位置與移動方向 (1 = 往右, -1 = 往左)
         self.pointer_pos = 1
         self.direction = 1
 
@@ -76,9 +73,12 @@ class IdentityVCalibrationView(discord.ui.View):
             return
 
         self.is_finished = True
-        self.stop()
+        try:
+            self.stop()
+        except:
+            pass
 
-        # 1. 立即回應 defer，讓 Discord 知道我們正在處理，防止「未及時回應」
+        # 1. 立即回應 defer，防止 Discord 顯示「未及時回應」
         await interaction.response.defer()
 
         success = self.pointer_pos in self.green_zones
@@ -102,7 +102,6 @@ class IdentityVCalibrationView(discord.ui.View):
                 )
                 button.label = "💥 脫鉤失敗"
                 button.style = discord.ButtonStyle.secondary
-                # 2. 使用 interaction.edit_original_response 完美更新延遲回應後的訊息
                 await interaction.edit_original_response(embed=embed, view=self)
                 return
 
