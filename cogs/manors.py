@@ -114,7 +114,6 @@ class Manor(commands.Cog):
             manor = self.get_or_create_manor(cursor, user_id)
             last_harvest_str = manor["last_harvest"]
             
-            # 🛡️ 修復：自動濾除時間字串後面的毫秒小數點，防止 strptime 報錯
             if "." in last_harvest_str:
                 last_harvest_str = last_harvest_str.split(".")[0]
 
@@ -123,6 +122,11 @@ class Manor(commands.Cog):
 
             # 設定冷卻時間：每 4 小時可以收成一次
             cooldown = timedelta(hours=4)
+            
+            # 🛡️ 除錯防護：如果上次收成時間比現在還未來、或是差距超過 7 天（代表資料庫時間錯亂），直接幫玩家重置冷卻！
+            if last_time > now or (now - last_time).days > 7:
+                last_time = now - timedelta(hours=5)
+
             if now - last_time < cooldown:
                 remaining = cooldown - (now - last_time)
                 hrs, rem_sec = divmod(int(remaining.total_seconds()), 3600)
@@ -153,7 +157,7 @@ class Manor(commands.Cog):
                 await interaction.followup.send(f"⚠️ 你的隨身背包已滿 (`{current_slots}/{max_slots}` 格)，無法放下莊園產出的新物資【{reward_mat}】！\n💡 請先使用 `/存入倉庫` 整理背包。", ephemeral=True)
                 return
 
-            # 更新上次收成時間
+            # 🌟 關鍵：確實更新上次收成時間為「現在」
             cursor.execute("UPDATE manors SET last_harvest = ? WHERE user_id = ?", (now.strftime("%Y-%m-%d %H:%M:%S"), user_id))
             
             # 給予金幣
