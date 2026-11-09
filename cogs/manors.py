@@ -113,6 +113,11 @@ class Manor(commands.Cog):
         try:
             manor = self.get_or_create_manor(cursor, user_id)
             last_harvest_str = manor["last_harvest"]
+            
+            # 🛡️ 修復：自動濾除時間字串後面的毫秒小數點，防止 strptime 報錯
+            if "." in last_harvest_str:
+                last_harvest_str = last_harvest_str.split(".")[0]
+
             last_time = datetime.strptime(last_harvest_str, "%Y-%m-%d %H:%M:%S")
             now = datetime.now()
 
@@ -133,6 +138,21 @@ class Manor(commands.Cog):
             reward_mat = random.choice(material_pool)
             reward_qty = random.randint(1, 2 * lvl)
 
+            # 📦 背包容量檢查 (預設 20 格種類上限)
+            cursor.execute("SELECT COUNT(*) as slots FROM inventory WHERE user_id = ? AND quantity > 0", (user_id,))
+            current_slots = cursor.fetchone()["slots"]
+
+            cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, reward_mat))
+            inv = cursor.fetchone()
+
+            cursor.execute("SELECT max_bag_slots FROM players WHERE user_id = ?", (user_id,))
+            player_row = cursor.fetchone()
+            max_slots = player_row["max_bag_slots"] if player_row and "max_bag_slots" in player_row.keys() and player_row["max_bag_slots"] else 20
+
+            if not inv and current_slots >= max_slots:
+                await interaction.followup.send(f"⚠️ 你的隨身背包已滿 (`{current_slots}/{max_slots}` 格)，無法放下莊園產出的新物資【{reward_mat}】！\n💡 請先使用 `/存入倉庫` 整理背包。", ephemeral=True)
+                return
+
             # 更新上次收成時間
             cursor.execute("UPDATE manors SET last_harvest = ? WHERE user_id = ?", (now.strftime("%Y-%m-%d %H:%M:%S"), user_id))
             
@@ -140,8 +160,6 @@ class Manor(commands.Cog):
             cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (gold_reward, user_id))
 
             # 給予背包道具
-            cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, reward_mat))
-            inv = cursor.fetchone()
             if inv:
                 cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (reward_qty, user_id, reward_mat))
             else:

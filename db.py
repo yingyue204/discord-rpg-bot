@@ -1271,6 +1271,16 @@ def init_db(db_name="game.db"):
         )
     """)
 
+    # 🏠 個人莊園資料表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS manors (
+            user_id INTEGER PRIMARY KEY,
+            manor_lvl INTEGER DEFAULT 1,
+            room_unlocked TEXT DEFAULT '基礎臥室',
+            last_harvest TEXT DEFAULT '2026-01-01 00:00:00'
+        )
+    """)
+    
     # 📦 莊園倉庫資料表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS manor_storage (
