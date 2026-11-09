@@ -1300,7 +1300,11 @@ def init_db(db_name="game.db"):
     
     # 檢查 players 是否有 max_bag_slots (預設隨身背包 20 格)
     try:
-        cursor.execute("ALTER TABLE players ADD COLUMN max_bag_slots INTEGER DEFAULT 20")
+        cursor.execute("ALTER TABLE players ADD COLUMN weapon_durability INTEGER DEFAULT 50")
+    except:
+        pass
+    try:
+        cursor.execute("ALTER TABLE players ADD COLUMN armor_durability INTEGER DEFAULT 50")
     except:
         pass
 

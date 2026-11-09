@@ -46,12 +46,13 @@ class BattleChoiceView(discord.ui.View):
         self.stop()
 
     async def process_turn(self, interaction: discord.Interaction, action: str):
-        # 立即 defer 避免任何 3 秒超時
+        # 🛡️ 第一時間宣告 defer，絕對不讓 Discord 3秒逾時
         await interaction.response.defer()
 
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
+            # 確保資料庫有這些欄位，避免抓取崩潰
             cursor.execute("""
                 SELECT hp, max_hp, atk, def, weapon_atk, armor_def, level, exp, mp,
                        COALESCE(weapon_durability, 50) as w_dur, 
@@ -77,7 +78,7 @@ class BattleChoiceView(discord.ui.View):
             
             elif action == "skill":
                 if (current_mp or 0) < 15:
-                    await interaction.followup.send("❌ 你的魔力值 (MP) 不足！", ephemeral=True)
+                    await interaction.followup.send("❌ 你的魔力值 (MP) 不足 15 點！", ephemeral=True)
                     return
 
                 cursor.execute("UPDATE players SET mp = mp - 15 WHERE user_id = ?", (self.user_id,))
@@ -87,6 +88,8 @@ class BattleChoiceView(discord.ui.View):
                 action_desc = f"你消耗 15 MP 施放強力技能，對 **{self.monster_name}** 造成了 `{player_dmg}` 點重創！"
 
             self.monster_hp -= player_dmg
+
+            # 消耗 1 點武器耐久
             new_w_dur = max(0, w_dur - 1)
             cursor.execute("UPDATE players SET weapon_durability = ? WHERE user_id = ?", (new_w_dur, self.user_id))
 
