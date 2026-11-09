@@ -21,8 +21,10 @@ class Manor(commands.Cog):
         cursor.execute("SELECT * FROM manors WHERE user_id = ?", (user_id,))
         manor = cursor.fetchone()
         if not manor:
+            # 初始化時給予一個已經超過 4 小時冷卻的時間，確保初次可以使用
+            initial_time = (datetime.now() - timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
             cursor.execute("INSERT INTO manors (user_id, manor_lvl, room_unlocked, last_harvest) VALUES (?, 1, '基礎臥室', ?)", 
-                           (user_id, str(datetime.now() - timedelta(hours=1))))
+                           (user_id, initial_time))
             cursor.execute("SELECT * FROM manors WHERE user_id = ?", (user_id,))
             manor = cursor.fetchone()
         return manor
@@ -67,7 +69,6 @@ class Manor(commands.Cog):
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
-            # 檢查玩家目前狀態
             cursor.execute("SELECT hp, max_hp, stamina, max_stamina FROM players WHERE user_id = ?", (user_id,))
             player = cursor.fetchone()
             if not player:
@@ -80,7 +81,6 @@ class Manor(commands.Cog):
                 await interaction.followup.send("💤 你現在精神飽滿，不需要特別休息！", ephemeral=True)
                 return
 
-            # 回復滿體力與部分生命
             new_stamina = max_stamina
             new_hp = min(max_hp, hp + 30)
             cursor.execute("UPDATE players SET stamina = ?, hp = ? WHERE user_id = ?", (new_stamina, new_hp, user_id))
@@ -117,14 +117,17 @@ class Manor(commands.Cog):
             if "." in last_harvest_str:
                 last_harvest_str = last_harvest_str.split(".")[0]
 
-            last_time = datetime.strptime(last_harvest_str, "%Y-%m-%d %H:%M:%S")
-            now = datetime.now()
+            try:
+                last_time = datetime.strptime(last_harvest_str, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                # 萬一格式崩潰，直接強制給予過期時間以防萬一
+                last_time = datetime.now() - timedelta(hours=5)
 
-            # 設定冷卻時間：每 4 小時可以收成一次
+            now = datetime.now()
             cooldown = timedelta(hours=4)
-            
-            # 🛡️ 除錯防護：如果上次收成時間比現在還未來、或是差距超過 7 天（代表資料庫時間錯亂），直接幫玩家重置冷卻！
-            if last_time > now or (now - last_time).days > 7:
+
+            # 🛡️ 關鍵除錯防護：如果時間差異常（例如被卡死在未來、或是時間戳異常損壞），強制自動重置為可收成狀態！
+            if last_time > now or (now - last_time).days > 30:
                 last_time = now - timedelta(hours=5)
 
             if now - last_time < cooldown:
@@ -157,8 +160,9 @@ class Manor(commands.Cog):
                 await interaction.followup.send(f"⚠️ 你的隨身背包已滿 (`{current_slots}/{max_slots}` 格)，無法放下莊園產出的新物資【{reward_mat}】！\n💡 請先使用 `/存入倉庫` 整理背包。", ephemeral=True)
                 return
 
-            # 🌟 關鍵：確實更新上次收成時間為「現在」
-            cursor.execute("UPDATE manors SET last_harvest = ? WHERE user_id = ?", (now.strftime("%Y-%m-%d %H:%M:%S"), user_id))
+            # 🌟 確實更新上次收成時間為「現在」
+            new_time_str = now.strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute("UPDATE manors SET last_harvest = ? WHERE user_id = ?", (new_time_str, user_id))
             
             # 給予金幣
             cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (gold_reward, user_id))
@@ -208,14 +212,12 @@ class Manor(commands.Cog):
             cost_mat = req["cost_mat"]
             cost_qty = req["cost_qty"]
 
-            # 檢查玩家金幣
             cursor.execute("SELECT gold FROM players WHERE user_id = ?", (user_id,))
             player = cursor.fetchone()
             if not player or player["gold"] < cost_gold:
                 await interaction.followup.send(f"❌ 金幣不足！擴建至 **{req['name']}** 需要 `{cost_gold} G`。", ephemeral=True)
                 return
 
-            # 檢查材料數量（如果需要的話）
             user_mat_qty = 0
             if cost_qty > 0:
                 cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, cost_mat))
@@ -225,12 +227,10 @@ class Manor(commands.Cog):
                     await interaction.followup.send(f"❌ 材料不足！擴建需要 **{cost_mat}** x `{cost_qty}`（你目前有 `{user_mat_qty} 個`）。", ephemeral=True)
                     return
 
-            # 扣除金幣與材料
             cursor.execute("UPDATE players SET gold = gold - ? WHERE user_id = ?", (cost_gold, user_id))
             if cost_qty > 0:
                 cursor.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?", (cost_qty, user_id, cost_mat))
 
-            # 升級莊園
             new_room_desc = f"基礎臥室、豪華客廳與專屬庭院 (Lv.{next_lvl})"
             cursor.execute("UPDATE manors SET manor_lvl = ?, room_unlocked = ? WHERE user_id = ?", (next_lvl, new_room_desc, user_id))
             conn.commit()
