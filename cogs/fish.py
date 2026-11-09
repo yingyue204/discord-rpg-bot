@@ -1,5 +1,6 @@
 import asyncio
 import random
+import traceback
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -39,7 +40,7 @@ FISHING_SPOTS = {
 
 class IdentityVCalibrationView(discord.ui.View):
     def __init__(self, user_id, spot_name, caught_item, stamina_cost):
-        super().__init__(timeout=5.0)  # 總共給 5 秒讓指針晃動
+        super().__init__(timeout=5.0)
         self.user_id = user_id
         self.spot_name = spot_name
         self.caught_item = caught_item
@@ -56,9 +57,9 @@ class IdentityVCalibrationView(discord.ui.View):
         bar = ""
         for i in range(1, 11):
             if i == self.pointer_pos:
-                bar += "📍"  # 正在左右晃動的指標
+                bar += "📍"
             elif i in self.green_zones:
-                bar += "🟩"  # 綠色成功判定區
+                bar += "🟩"
             else:
                 bar += "⬛"
         return f"`[{bar}]`"
@@ -78,7 +79,6 @@ class IdentityVCalibrationView(discord.ui.View):
         except:
             pass
 
-        # 1. 立即回應 defer，防止 Discord 顯示「未及時回應」
         await interaction.response.defer()
 
         success = self.pointer_pos in self.green_zones
@@ -89,11 +89,9 @@ class IdentityVCalibrationView(discord.ui.View):
             for child in self.children:
                 child.disabled = True
 
-            # 🛠️ 扣除體力與 1 點魚竿耐久度
             cursor.execute("UPDATE players SET stamina = stamina - ?, rod_durability = rod_durability - 1 WHERE user_id = ?", (self.stamina_cost, self.user_id))
 
             if not success:
-                # 💥 失敗：魚脫鉤
                 conn.commit()
                 embed = discord.Embed(
                     title="❌ 【校準失敗·魚兒脫鉤】",
@@ -105,7 +103,6 @@ class IdentityVCalibrationView(discord.ui.View):
                 await interaction.edit_original_response(embed=embed, view=self)
                 return
 
-            # 📦 背包容量檢查
             cursor.execute("SELECT COUNT(*) as slots FROM inventory WHERE user_id = ? AND quantity > 0", (self.user_id,))
             current_slots = cursor.fetchone()["slots"]
 
@@ -117,7 +114,7 @@ class IdentityVCalibrationView(discord.ui.View):
             max_slots = player_row["max_bag_slots"] if player_row and "max_bag_slots" in player_row.keys() and player_row["max_bag_slots"] else 20
 
             if not inv_row and current_slots >= max_slots:
-                conn.commit()  # 雖然背包滿沒拿到魚，但耐久跟體力照常扣除
+                conn.commit()
                 embed = discord.Embed(
                     title="⚠️ 【背包空間已滿】",
                     description=f"你成功釣起了 **{self.caught_item}**，但隨身背包已滿 (`{current_slots}/{max_slots}` 格)，魚又被放回水裡了！\n💡 請先使用 `/存入倉庫` 整理背包。",
@@ -127,7 +124,6 @@ class IdentityVCalibrationView(discord.ui.View):
                 await interaction.edit_original_response(embed=embed, view=self)
                 return
 
-            # 發放獎勵
             give_qty = 1
             if inv_row:
                 cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (give_qty, self.user_id, self.caught_item))
@@ -157,6 +153,8 @@ class IdentityVCalibrationView(discord.ui.View):
             await interaction.edit_original_response(embed=embed, view=self)
 
         except Exception as e:
+            # 💡 這行會把最詳細的錯誤行數印在後台主控台
+            traceback.print_exc()
             conn.rollback()
             try:
                 await interaction.followup.send(f"❌ 發生錯誤：`{e}`", ephemeral=True)
@@ -170,7 +168,6 @@ class IdentityVCalibrationView(discord.ui.View):
         if not self.is_finished:
             self.is_finished = True
             
-            # 超時也扣除耐久度與體力
             conn = get_db_connection()
             cursor = conn.cursor()
             try:
@@ -298,6 +295,7 @@ class Fish(commands.Cog):
             asyncio.create_task(self.start_pointer_animation(view, interaction))
 
         except Exception as e:
+            traceback.print_exc()
             conn.rollback()
             await interaction.followup.send(f"❌ 釣魚過程發生錯誤：`{e}`", ephemeral=True)
         finally:
