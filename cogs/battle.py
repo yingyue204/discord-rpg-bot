@@ -33,6 +33,7 @@ class BattleChoiceView(discord.ui.View):
             await interaction.response.send_message("⚠️ 這不是你的戰鬥！", ephemeral=True)
             return
         
+        await interaction.response.defer()
         for child in self.children:
             child.disabled = True
         
@@ -41,10 +42,13 @@ class BattleChoiceView(discord.ui.View):
             description=f"你迅速撤退，成功從 **{self.monster_name}** 面前逃脫了！",
             color=discord.Color.orange()
         )
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.edit_original_response(embed=embed, view=self)
         self.stop()
 
     async def process_turn(self, interaction: discord.Interaction, action: str):
+        # 💡 關鍵：第一時間呼叫 defer，防止 3 秒逾時
+        await interaction.response.defer()
+
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
@@ -56,7 +60,7 @@ class BattleChoiceView(discord.ui.View):
             """, (self.user_id,))
             player = cursor.fetchone()
             if not player:
-                await interaction.response.send_message("⚠️ 找不到你的角色資料！", ephemeral=True)
+                await interaction.followup.send("⚠️ 找不到你的角色資料！", ephemeral=True)
                 return
 
             hp, max_hp, base_atk, base_def, weapon_atk, armor_def, level, exp, current_mp, w_dur, a_dur = player
@@ -73,7 +77,7 @@ class BattleChoiceView(discord.ui.View):
             
             elif action == "skill":
                 if (current_mp or 0) < 15:
-                    await interaction.response.send_message("❌ 你的魔力值 (MP) 不足！", ephemeral=True)
+                    await interaction.followup.send("❌ 你的魔力值 (MP) 不足！", ephemeral=True)
                     return
 
                 cursor.execute("UPDATE players SET mp = mp - 15 WHERE user_id = ?", (self.user_id,))
@@ -146,7 +150,7 @@ class BattleChoiceView(discord.ui.View):
                 if new_w_dur == 0:
                     embed.add_field(name="⚠️ 裝備警告", value="你的武器已經破損，攻擊力大幅下降！請盡快前往鐵匠鋪修復。", inline=False)
 
-                await interaction.response.edit_message(embed=embed, view=self)
+                await interaction.edit_original_response(embed=embed, view=self)
                 self.stop()
                 return
 
@@ -172,7 +176,7 @@ class BattleChoiceView(discord.ui.View):
                     description=f"**{self.monster_name}** 反擊造成了 `{monster_dmg}` 點傷害。\n你體力不支倒地，已被緊急送往新手村診所治療！\n💖 當前血量已恢復至：`{new_hp}`",
                     color=discord.Color.red()
                 )
-                await interaction.response.edit_message(embed=embed, view=self)
+                await interaction.edit_original_response(embed=embed, view=self)
                 self.stop()
                 return
 
@@ -192,16 +196,13 @@ class BattleChoiceView(discord.ui.View):
             embed.add_field(name="🛡️ 你的狀態", value=f"❤️ 血量：`{hp}/{max_hp}`\n🛠️ 武器耐久：`{new_w_dur}/50`\n🛡️ 防具耐久：`{new_a_dur}/50`", inline=True)
             embed.set_footer(text="💡 60秒未操作將自動過期。")
 
-            await interaction.response.edit_message(embed=embed, view=self)
+            await interaction.edit_original_response(embed=embed, view=self)
 
         except Exception as e:
             traceback.print_exc()
             conn.rollback()
             try:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message(f"❌ 戰鬥發生錯誤：`{e}`", ephemeral=True)
-                else:
-                    await interaction.followup.send(f"❌ 戰鬥發生錯誤：`{e}`", ephemeral=True)
+                await interaction.followup.send(f"❌ 戰鬥發生錯誤：`{e}`", ephemeral=True)
             except:
                 pass
         finally:
@@ -214,6 +215,7 @@ class Battle(commands.Cog):
 
     @app_commands.command(name="打怪", description="在荒野中尋找野生怪物進行主動戰鬥")
     async def battle(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         user_id = interaction.user.id
 
         conn = get_db_connection()
@@ -224,11 +226,11 @@ class Battle(commands.Cog):
         conn.close()
 
         if not player or not player[0]:
-            await interaction.response.send_message("⚠️ 你尚未選擇身份！請先使用 `/setup_roles` 選擇職業。", ephemeral=True)
+            await interaction.followup.send("⚠️ 你尚未選擇身份！請先使用 `/setup_roles` 選擇職業。", ephemeral=True)
             return
 
         if player[1] <= 0:
-            await interaction.response.send_message("⚠️ 你目前處於倒地狀態，無法進行戰鬥！請先透過冒險或診所恢復。", ephemeral=True)
+            await interaction.followup.send("⚠️ 你目前處於倒地狀態，無法進行戰鬥！請先透過冒險或診所恢復。", ephemeral=True)
             return
 
         monster_names = ["荒野流民", "廢土狂徒", "失控機械兵", "暴走掠奪者"]
@@ -250,7 +252,7 @@ class Battle(commands.Cog):
         embed.set_footer(text="💡 60秒未操作將自動過期。")
 
         view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk)
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.followup.send(embed=embed, view=view)
 
 async def setup(bot):
     await bot.add_cog(Battle(bot))
