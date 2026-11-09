@@ -42,20 +42,20 @@ class BattleChoiceView(discord.ui.View):
             description=f"你迅速撤退，成功從 **{self.monster_name}** 面前逃脫了！",
             color=discord.Color.orange()
         )
-        if self.message:
-            await self.message.edit(embed=embed, view=self)
-        else:
+        # 💡 針對私密或 followup 訊息，使用 edit_original_response 最安全
+        try:
             await interaction.edit_original_response(embed=embed, view=self)
+        except:
+            if self.message:
+                await self.message.edit(embed=embed, view=self)
         self.stop()
 
     async def process_turn(self, interaction: discord.Interaction, action: str):
-        # 💡 關鍵：先 defer() 避免 Discord 3秒超時與未及時回應錯誤！
         await interaction.response.defer()
 
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
-            # 取得玩家最新數值、裝備加成與裝備耐久度
             cursor.execute("""
                 SELECT hp, max_hp, atk, def, weapon_atk, armor_def, level, exp, 
                        COALESCE(weapon_durability, 50) as w_dur, 
@@ -71,7 +71,6 @@ class BattleChoiceView(discord.ui.View):
             total_atk = base_atk + (weapon_atk or 0)
             total_def = base_def + (armor_def or 0)
 
-            # 🛠️ 裝備破損判定 (若耐久歸零，能力值打 3 折)
             real_atk = total_atk if w_dur > 0 else max(1, int(total_atk * 0.3))
             real_def = total_def if a_dur > 0 else int(total_def * 0.3)
 
@@ -96,7 +95,6 @@ class BattleChoiceView(discord.ui.View):
 
             self.monster_hp -= player_dmg
 
-            # 🛠️ 消耗 1 點武器耐久度
             new_w_dur = max(0, w_dur - 1)
             cursor.execute("UPDATE players SET weapon_durability = ? WHERE user_id = ?", (new_w_dur, self.user_id))
 
@@ -126,7 +124,6 @@ class BattleChoiceView(discord.ui.View):
 
                 reward_text = f"💰 獲得金幣：`+{gold_reward} G`\n✨ 獲得經驗：`+80 EXP`{level_up_msg}"
 
-                # 📦 戰利品背包容量檢查
                 if dropped_item:
                     cursor.execute("SELECT COUNT(*) as slots FROM inventory WHERE user_id = ? AND quantity > 0", (self.user_id,))
                     current_slots = cursor.fetchone()["slots"]
@@ -160,10 +157,7 @@ class BattleChoiceView(discord.ui.View):
                 if new_w_dur == 0:
                     embed.add_field(name="⚠️ 裝備警告", value="你的武器已經破損，攻擊力大幅下降！請盡快前往鐵匠鋪修復。", inline=False)
 
-                if self.message:
-                    await self.message.edit(embed=embed, view=self)
-                else:
-                    await interaction.edit_original_response(embed=embed, view=self)
+                await interaction.edit_original_response(embed=embed, view=self)
                 self.stop()
                 return
 
@@ -171,12 +165,11 @@ class BattleChoiceView(discord.ui.View):
             monster_dmg = max(1, self.monster_atk - int(real_def * 0.4))
             hp = max(0, hp - monster_dmg)
             
-            # 🛠️ 消耗 1 點防具耐久度
             new_a_dur = max(0, a_dur - 1)
             cursor.execute("UPDATE players SET hp = ?, armor_durability = ? WHERE user_id = ?", (hp, new_a_dur, self.user_id))
             conn.commit()
 
-            # 4. 檢查玩家是否倒地（當下送醫機制）
+            # 4. 檢查玩家是否倒地
             if hp <= 0:
                 new_hp = 50 
                 cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (new_hp, self.user_id))
@@ -190,10 +183,7 @@ class BattleChoiceView(discord.ui.View):
                     description=f"**{self.monster_name}** 反擊造成了 `{monster_dmg}` 點傷害。\n你體力不支倒地，已被緊急送往新手村診所治療！\n💖 當前血量已恢復至：`{new_hp}`",
                     color=discord.Color.red()
                 )
-                if self.message:
-                    await self.message.edit(embed=embed, view=self)
-                else:
-                    await interaction.edit_original_response(embed=embed, view=self)
+                await interaction.edit_original_response(embed=embed, view=self)
                 self.stop()
                 return
 
@@ -213,10 +203,8 @@ class BattleChoiceView(discord.ui.View):
             embed.add_field(name="🛡️ 你的狀態", value=f"❤️ 血量：`{hp}/{max_hp}`\n🛠️ 武器耐久：`{new_w_dur}/50`\n🛡️ 防具耐久：`{new_a_dur}/50`", inline=True)
             embed.set_footer(text="💡 60秒未操作將自動過期。")
 
-            if self.message:
-                await self.message.edit(embed=embed, view=self)
-            else:
-                await interaction.edit_original_response(embed=embed, view=self)
+            # 💡 關鍵修復：使用 edit_original_response 來安全更新私密回應訊息
+            await interaction.edit_original_response(embed=embed, view=self)
 
         except Exception as e:
             print(f"❌ 戰鬥執行錯誤: {e}")
