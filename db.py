@@ -1185,12 +1185,19 @@ def init_db(db_name="game.db"):
             armor_name TEXT,
             armor_def INTEGER DEFAULT 0,
             cooking_level INTEGER DEFAULT 1
+            rod_durability INTEGER DEFAULT 20
         )
     """)
 
     # 🛡️ 自動檢查並補上任何可能缺少的欄位（防止舊資料庫報錯）
     cursor.execute("PRAGMA table_info(players)")
     columns = [column[1] for column in cursor.fetchall()]
+
+    try:
+    cursor.execute("ALTER TABLE players ADD COLUMN rod_durability INTEGER DEFAULT 20")
+    conn.commit()
+except:
+    pass # 欄位已存在則略過
     
     required_columns = {
         "role_name": "TEXT",
