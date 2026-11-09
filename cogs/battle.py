@@ -11,7 +11,6 @@ class BattleChoiceView(discord.ui.View):
         self.monster_name = monster_name
         self.monster_hp = monster_hp
         self.monster_atk = monster_atk
-        self.message = None  # 記錄訊息以便後續更新
 
     @discord.ui.button(label="⚔️ 普通攻擊", style=discord.ButtonStyle.primary)
     async def attack_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -33,7 +32,6 @@ class BattleChoiceView(discord.ui.View):
             await interaction.response.send_message("⚠️ 這不是你的戰鬥！", ephemeral=True)
             return
         
-        await interaction.response.defer()
         for child in self.children:
             child.disabled = True
         
@@ -42,32 +40,25 @@ class BattleChoiceView(discord.ui.View):
             description=f"你迅速撤退，成功從 **{self.monster_name}** 面前逃脫了！",
             color=discord.Color.orange()
         )
-        # 💡 針對私密或 followup 訊息，使用 edit_original_response 最安全
-        try:
-            await interaction.edit_original_response(embed=embed, view=self)
-        except:
-            if self.message:
-                await self.message.edit(embed=embed, view=self)
+        await interaction.response.edit_message(embed=embed, view=self)
         self.stop()
 
     async def process_turn(self, interaction: discord.Interaction, action: str):
-        await interaction.response.defer()
-
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
             cursor.execute("""
-                SELECT hp, max_hp, atk, def, weapon_atk, armor_def, level, exp, 
+                SELECT hp, max_hp, atk, def, weapon_atk, armor_def, level, exp, mp,
                        COALESCE(weapon_durability, 50) as w_dur, 
                        COALESCE(armor_durability, 50) as a_dur 
                 FROM players WHERE user_id = ?
             """, (self.user_id,))
             player = cursor.fetchone()
             if not player:
-                await interaction.followup.send("⚠️ 找不到你的角色資料！", ephemeral=True)
+                await interaction.response.send_message("⚠️ 找不到你的角色資料！", ephemeral=True)
                 return
 
-            hp, max_hp, base_atk, base_def, weapon_atk, armor_def, level, exp, w_dur, a_dur = player
+            hp, max_hp, base_atk, base_def, weapon_atk, armor_def, level, exp, current_mp, w_dur, a_dur = player
             total_atk = base_atk + (weapon_atk or 0)
             total_def = base_def + (armor_def or 0)
 
@@ -80,11 +71,8 @@ class BattleChoiceView(discord.ui.View):
                 action_desc = f"你對 **{self.monster_name}** 發動普通攻擊，造成了 `{player_dmg}` 點傷害！"
             
             elif action == "skill":
-                cursor.execute("SELECT mp FROM players WHERE user_id = ?", (self.user_id,))
-                current_mp = cursor.fetchone()[0]
-            
                 if current_mp < 15:
-                    await interaction.followup.send("❌ 你的魔力值 (MP) 不足！", ephemeral=True)
+                    await interaction.response.send_message("❌ 你的魔力值 (MP) 不足！", ephemeral=True)
                     return
 
                 cursor.execute("UPDATE players SET mp = mp - 15 WHERE user_id = ?", (self.user_id,))
@@ -157,7 +145,7 @@ class BattleChoiceView(discord.ui.View):
                 if new_w_dur == 0:
                     embed.add_field(name="⚠️ 裝備警告", value="你的武器已經破損，攻擊力大幅下降！請盡快前往鐵匠鋪修復。", inline=False)
 
-                await interaction.edit_original_response(embed=embed, view=self)
+                await interaction.response.edit_message(embed=embed, view=self)
                 self.stop()
                 return
 
@@ -183,7 +171,7 @@ class BattleChoiceView(discord.ui.View):
                     description=f"**{self.monster_name}** 反擊造成了 `{monster_dmg}` 點傷害。\n你體力不支倒地，已被緊急送往新手村診所治療！\n💖 當前血量已恢復至：`{new_hp}`",
                     color=discord.Color.red()
                 )
-                await interaction.edit_original_response(embed=embed, view=self)
+                await interaction.response.edit_message(embed=embed, view=self)
                 self.stop()
                 return
 
@@ -203,13 +191,15 @@ class BattleChoiceView(discord.ui.View):
             embed.add_field(name="🛡️ 你的狀態", value=f"❤️ 血量：`{hp}/{max_hp}`\n🛠️ 武器耐久：`{new_w_dur}/50`\n🛡️ 防具耐久：`{new_a_dur}/50`", inline=True)
             embed.set_footer(text="💡 60秒未操作將自動過期。")
 
-            # 💡 關鍵修復：使用 edit_original_response 來安全更新私密回應訊息
-            await interaction.edit_original_response(embed=embed, view=self)
+            await interaction.response.edit_message(embed=embed, view=self)
 
         except Exception as e:
             print(f"❌ 戰鬥執行錯誤: {e}")
             try:
-                await interaction.followup.send(f"❌ 戰鬥發生錯誤：`{e}`", ephemeral=True)
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(f"❌ 戰鬥發生錯誤：`{e}`", ephemeral=True)
+                else:
+                    await interaction.followup.send(f"❌ 戰鬥發生錯誤：`{e}`", ephemeral=True)
             except:
                 pass
         finally:
@@ -222,7 +212,6 @@ class Battle(commands.Cog):
 
     @app_commands.command(name="打怪", description="在荒野中尋找野生怪物進行主動戰鬥")
     async def battle(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
 
         conn = get_db_connection()
@@ -233,11 +222,11 @@ class Battle(commands.Cog):
         conn.close()
 
         if not player or not player[0]:
-            await interaction.followup.send("⚠️ 你尚未選擇身份！請先使用 `/setup_roles` 選擇職業。", ephemeral=True)
+            await interaction.response.send_message("⚠️ 你尚未選擇身份！請先使用 `/setup_roles` 選擇職業。", ephemeral=True)
             return
 
         if player[1] <= 0:
-            await interaction.followup.send("⚠️ 你目前處於倒地狀態，無法進行戰鬥！請先透過冒險或診所恢復。", ephemeral=True)
+            await interaction.response.send_message("⚠️ 你目前處於倒地狀態，無法進行戰鬥！請先透過冒險或診所恢復。", ephemeral=True)
             return
 
         monster_names = ["荒野流民", "廢土狂徒", "失控機械兵", "暴走掠奪者"]
@@ -259,8 +248,7 @@ class Battle(commands.Cog):
         embed.set_footer(text="💡 60秒未操作將自動過期。")
 
         view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk)
-        sent_message = await interaction.followup.send(embed=embed, view=view, ephemeral=True, wait=True)
-        view.message = sent_message
+        await interaction.response.send_message(embed=embed, view=view)
 
 async def setup(bot):
     await bot.add_cog(Battle(bot))
