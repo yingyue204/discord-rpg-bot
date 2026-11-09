@@ -69,7 +69,6 @@ class IdentityVCalibrationView(discord.ui.View):
             await interaction.response.send_message("⚠️ 這不是你的釣竿！", ephemeral=True)
             return
 
-        # 使用內建的 is_finished() 判斷
         if self.is_finished():
             return
 
@@ -192,7 +191,7 @@ class Fish(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    async def start_pointer_animation(self, view, interaction):
+    async def start_pointer_animation(self, view):
         try:
             while not view.is_finished():
                 await asyncio.sleep(0.4)
@@ -205,13 +204,15 @@ class Fish(commands.Cog):
                 elif view.pointer_pos <= 1:
                     view.direction = 1
 
-                embed = interaction.message.embeds[0]
-                embed.description = f"水面傳來劇烈波動，大魚正在掙扎！\n\n" \
-                                    f"🎚️ **校準進度條**：{view.render_bar()}\n" \
-                                    f"⚠️ **請在指針（📍）移動到綠色區域（🟩）時按下下方按鈕！**"
-                
                 if view.message:
-                    await view.message.edit(embed=embed, view=view)
+                    embed = view.message.embeds[0]
+                    embed.description = f"水面傳來劇烈波動，大魚正在掙扎！\n\n" \
+                                        f"🎚️ **校準進度條**：{view.render_bar()}\n" \
+                                        f"⚠️ **請在指針（📍）移動到綠色區域（🟩）時按下下方按鈕！**"
+                    try:
+                        await view.message.edit(embed=embed, view=view)
+                    except:
+                        break
         except Exception:
             pass
 
@@ -285,7 +286,8 @@ class Fish(commands.Cog):
             sent_message = await interaction.followup.send(embed=embed, view=view, wait=True)
             view.message = sent_message
 
-            asyncio.create_task(self.start_pointer_animation(view, interaction))
+            # 啟動指針晃動動畫
+            asyncio.create_task(self.start_pointer_animation(view))
 
         except Exception as e:
             traceback.print_exc()
