@@ -102,7 +102,7 @@ class IdentityVCalibrationView(discord.ui.View):
                 )
                 button.label = "💥 脫鉤失敗"
                 button.style = discord.ButtonStyle.secondary
-                # 2. 使用 interaction.followup.edit_message 完美更新延遲回應後的訊息
+                # 2. 使用 interaction.edit_original_response 完美更新延遲回應後的訊息
                 await interaction.edit_original_response(embed=embed, view=self)
                 return
 
@@ -163,6 +163,144 @@ class IdentityVCalibrationView(discord.ui.View):
                 await interaction.followup.send(f"❌ 發生錯誤：`{e}`", ephemeral=True)
             except:
                 pass
+        finally:
+            cursor.close()
+            conn.close()
+
+    async def on_timeout(self):
+        if not self.is_finished:
+            self.is_finished = True
+            
+            # 超時也扣除耐久度與體力
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute("UPDATE players SET stamina = stamina - ?, rod_durability = max(0, rod_durability - 1) WHERE user_id = ?", (self.stamina_cost, self.user_id))
+                conn.commit()
+            except:
+                pass
+            finally:
+                cursor.close()
+                conn.close()
+
+            for child in self.children:
+                child.disabled = True
+                child.label = "⌛ 超時未按 (脫鉤)"
+                child.style = discord.ButtonStyle.secondary
+
+            embed = discord.Embed(
+                title="❌ 【校準超時·魚兒逃跑】",
+                description="太慢了！你猶豫不決，指針晃出界外，魚咬破魚線逃走了...\n⚠️ **魚竿耐久度 `-1`**",
+                color=discord.Color.red()
+            )
+            if self.message:
+                try:
+                    await self.message.edit(embed=embed, view=self)
+                except:
+                    pass
+
+class Fish(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    async def start_pointer_animation(self, view, interaction):
+        try:
+            while not view.is_finished:
+                await asyncio.sleep(0.4)
+                if view.is_finished:
+                    break
+
+                view.pointer_pos += view.direction
+                if view.pointer_pos >= 10:
+                    view.direction = -1
+                elif view.pointer_pos <= 1:
+                    view.direction = 1
+
+                embed = interaction.message.embeds[0]
+                embed.description = f"水面傳來劇烈波動，大魚正在掙扎！\n\n" \
+                                    f"🎚️ **校準進度條**：{view.render_bar()}\n" \
+                                    f"⚠️ **請在指針（📍）移動到綠色區域（🟩）時按下下方按鈕！**"
+                
+                if view.message:
+                    await view.message.edit(embed=embed, view=view)
+        except Exception:
+            pass
+
+    @app_commands.command(name="釣魚", description="前往指定的釣魚場揮竿釣魚，進行第五人格風格校準 QTE")
+    @app_commands.rename(spot="釣魚地點")
+    @app_commands.choices(spot=[
+        app_commands.Choice(name="新手河畔 (消耗 10 體力)", value="新手河畔"),
+        app_commands.Choice(name="神祕湖泊 (消耗 20 體力)", value="神祕湖泊"),
+        app_commands.Choice(name="深海漁場 (消耗 35 體力)", value="深海漁場")
+    ])
+    @app_commands.describe(spot="你想前往的釣魚地點")
+    async def fish(self, interaction: discord.Interaction, spot: str):
+        await interaction.response.defer(ephemeral=True)
+        user_id = interaction.user.id
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT hp, stamina, max_stamina, rod_durability FROM players WHERE user_id = ?", (user_id,))
+            player = cursor.fetchone()
+
+            if not player:
+                await interaction.followup.send("⚠️ 你尚未建立角色！請先使用 `/setup_roles` 選擇職業。", ephemeral=True)
+                return
+
+            hp, stamina, max_stamina, rod_durability = player
+
+            if rod_durability is None:
+                rod_durability = 20
+                cursor.execute("UPDATE players SET rod_durability = 20 WHERE user_id = ?", (user_id,))
+                conn.commit()
+
+            if hp <= 0:
+                await interaction.followup.send("⚠️ 你目前處於倒地狀態，無法釣魚！請先前往診所治療。", ephemeral=True)
+                return
+
+            if rod_durability <= 0:
+                embed = discord.Embed(
+                    title="🎣 【魚竿已損壞】",
+                    description=f"你的釣魚竿耐久度已經耗盡 (`0/20`)，無法繼續揮竿！\n\n💡 請前往商店購買新魚竿或使用修復工具。",
+                    color=discord.Color.red()
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                return
+
+            spot_info = FISHING_SPOTS.get(spot, FISHING_SPOTS["新手河畔"])
+            cost = spot_info["stamina"]
+
+            if stamina < cost:
+                embed = discord.Embed(
+                    title="⚡ 【體力耗盡】",
+                    description=f"你的體力不足以支撐這次釣魚！\n當前體力：`{stamina}/{max_stamina}` (需要 `{cost}` 點)\n\n💡 請先食用食物或透過莊園休息來恢復體力！",
+                    color=discord.Color.orange()
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                return
+
+            items, weights = zip(*spot_info["drops"])
+            caught_item = random.choices(items, weights=weights, k=1)[0]
+
+            embed = discord.Embed(
+                title=f"🎣 【{spot}·注意校準！】",
+                description=f"水面傳來劇烈波動，大魚正在掙扎！\n\n"
+                            f"🎚️ **校準進度條**：等待指針開始晃動...\n"
+                            f"🛠️ **當前魚竿耐久**：`{rod_durability}/20`\n"
+                            f"⚠️ **請在指針（📍）移動到綠色區域（🟩）時按下下方按鈕！**",
+                color=discord.Color.blue()
+            )
+
+            view = IdentityVCalibrationView(user_id, spot, caught_item, cost)
+            sent_message = await interaction.followup.send(embed=embed, view=view, wait=True)
+            view.message = sent_message
+
+            asyncio.create_task(self.start_pointer_animation(view, interaction))
+
+        except Exception as e:
+            conn.rollback()
+            await interaction.followup.send(f"❌ 釣魚過程發生錯誤：`{e}`", ephemeral=True)
         finally:
             cursor.close()
             conn.close()
