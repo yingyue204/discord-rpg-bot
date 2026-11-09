@@ -1184,7 +1184,7 @@ def init_db(db_name="game.db"):
             weapon_atk INTEGER DEFAULT 0,
             armor_name TEXT,
             armor_def INTEGER DEFAULT 0,
-            cooking_level INTEGER DEFAULT 1
+            cooking_level INTEGER DEFAULT 1,
             rod_durability INTEGER DEFAULT 20
         )
     """)
@@ -1194,8 +1194,8 @@ def init_db(db_name="game.db"):
     columns = [column[1] for column in cursor.fetchall()]
 
     try:
-    cursor.execute("ALTER TABLE players ADD COLUMN rod_durability INTEGER DEFAULT 20")
-    conn.commit()
+        cursor.execute("ALTER TABLE players ADD COLUMN rod_durability INTEGER DEFAULT 20")
+        conn.commit()
     except:
         pass
     
