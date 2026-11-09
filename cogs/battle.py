@@ -46,7 +46,7 @@ class BattleChoiceView(discord.ui.View):
         self.stop()
 
     async def process_turn(self, interaction: discord.Interaction, action: str):
-        # 💡 關鍵：第一時間呼叫 defer，防止 3 秒逾時
+        # 立即 defer 避免任何 3 秒超時
         await interaction.response.defer()
 
         conn = get_db_connection()
@@ -87,7 +87,6 @@ class BattleChoiceView(discord.ui.View):
                 action_desc = f"你消耗 15 MP 施放強力技能，對 **{self.monster_name}** 造成了 `{player_dmg}` 點重創！"
 
             self.monster_hp -= player_dmg
-
             new_w_dur = max(0, w_dur - 1)
             cursor.execute("UPDATE players SET weapon_durability = ? WHERE user_id = ?", (new_w_dur, self.user_id))
 
