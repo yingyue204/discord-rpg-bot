@@ -1196,8 +1196,8 @@ def init_db(db_name="game.db"):
     try:
     cursor.execute("ALTER TABLE players ADD COLUMN rod_durability INTEGER DEFAULT 20")
     conn.commit()
-except:
-    pass # 欄位已存在則略過
+    except:
+        pass
     
     required_columns = {
         "role_name": "TEXT",
@@ -1301,19 +1301,6 @@ except:
     # 檢查 players 是否有 max_bag_slots (預設隨身背包 20 格)
     try:
         cursor.execute("ALTER TABLE players ADD COLUMN max_bag_slots INTEGER DEFAULT 20")
-    except:
-        pass
-
-    # 🛡️ 安全新增裝備耐久度欄位 (預設最大耐久 50)
-    try:
-        cursor.execute("ALTER TABLE players ADD COLUMN weapon_durability INTEGER DEFAULT 50")
-        conn.commit()
-    except:
-        pass
-
-    try:
-        cursor.execute("ALTER TABLE players ADD COLUMN armor_durability INTEGER DEFAULT 50")
-        conn.commit()
     except:
         pass
 
