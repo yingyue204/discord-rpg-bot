@@ -1,10 +1,10 @@
+import asyncio
 import random
 import discord
 from discord.ext import commands
 from discord import app_commands
 from db import get_db_connection
 
-# 🎣 釣魚區域與魚獲資料設定
 FISHING_SPOTS = {
     "新手河畔": {
         "description": "平靜的河岸，適合初學者練習釣魚，偶爾能釣到廢棄物。",
@@ -37,35 +37,71 @@ FISHING_SPOTS = {
     }
 }
 
-# 🎯 第五人格風格的校準 QTE 互動介面
-class FishingCalibrationView(discord.ui.View):
+class IdentityVCalibrationView(discord.ui.View):
     def __init__(self, user_id, spot_name, caught_item, stamina_cost):
-        super().__init__(timeout=3.5)  # 3.5秒內必須點擊
+        super().__init__(timeout=5.0)  # 總共給 5 秒讓指針晃動
         self.user_id = user_id
         self.spot_name = spot_name
         self.caught_item = caught_item
         self.stamina_cost = stamina_cost
-        self.clicked = False
+        
+        self.is_finished = False
         self.message = None
+        
+        # 綠色判定區設定（總共 10 格，例如第 4, 5, 6 格是綠色安全區）
+        self.green_zones = [4, 5, 6]
+        
+        # 指針初始位置與移動方向 (1 = 往右, -1 = 往左)
+        self.pointer_pos = 1
+        self.direction = 1
 
-        # 隨機決定甜蜜點位置 (1 ~ 10)
-        self.sweet_spot = random.randint(3, 7)
+    def render_bar(self):
+        bar = ""
+        for i in range(1, 11):
+            if i == self.pointer_pos:
+                bar += "📍"  # 正在左右晃動的指標
+            elif i in self.green_zones:
+                bar += "🟩"  # 綠色成功判定區
+            else:
+                bar += "⬛"
+        return f"`[{bar}]`"
 
-    @discord.ui.button(label="🎯 釣魚校準 (Calibrate!)", style=discord.ButtonStyle.danger)
-    async def calibrate_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="🎯 點擊校準！", style=discord.ButtonStyle.danger)
+    async def click_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("⚠️ 這不是你的釣竿！", ephemeral=True)
             return
 
-        self.clicked = True
+        if self.is_finished:
+            return
+
+        self.is_finished = True
         self.stop()
 
-        hit_position = random.randint(1, 10)
-        diff = abs(hit_position - self.sweet_spot)
+        success = self.pointer_pos in self.green_zones
 
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
+            for child in self.children:
+                child.disabled = True
+
+            # 🛠️ 不管成功或失敗，揮竿一定會消耗 1 點魚竿耐久度與體力
+            cursor.execute("UPDATE players SET stamina = stamina - ?, rod_durability = rod_durability - 1 WHERE user_id = ?", (self.stamina_cost, self.user_id))
+
+            if not success:
+                # 💥 失敗：魚脫鉤
+                conn.commit()
+                embed = discord.Embed(
+                    title="❌ 【校準失敗·魚兒脫鉤】",
+                    description=f"指針停在了錯誤的位置（格數 `{self.pointer_pos}`）！你錯過了綠色區域，魚線斷裂，魚逃跑了...\n⚠️ **魚竿耐久度 `-1`**",
+                    color=discord.Color.red()
+                )
+                button.label = "💥 脫鉤失敗"
+                button.style = discord.ButtonStyle.secondary
+                await interaction.response.edit_message(embed=embed, view=self)
+                return
+
             # 📦 背包容量檢查
             cursor.execute("SELECT COUNT(*) as slots FROM inventory WHERE user_id = ? AND quantity > 0", (self.user_id,))
             current_slots = cursor.fetchone()["slots"]
@@ -78,28 +114,22 @@ class FishingCalibrationView(discord.ui.View):
             max_slots = player_row["max_bag_slots"] if player_row and "max_bag_slots" in player_row.keys() and player_row["max_bag_slots"] else 20
 
             if not inv_row and current_slots >= max_slots:
-                button.disabled = True
-                button.label = "🎒 背包空間不足"
-                button.style = discord.ButtonStyle.secondary
+                conn.commit()  # 雖然背包滿沒拿到魚，但耐久跟體力照常扣除
                 embed = discord.Embed(
                     title="⚠️ 【背包空間已滿】",
-                    description=f"你成功釣起了 **{self.caught_item}**，但隨身背包已滿 (`{current_slots}/{max_slots}` 格)！\n💡 請先使用 `/存入倉庫` 整理背包。",
+                    description=f"你成功釣起了 **{self.caught_item}**，但隨身背包已滿 (`{current_slots}/{max_slots}` 格)，魚又被放回水裡了！\n💡 請先使用 `/存入倉庫` 整理背包。",
                     color=discord.Color.orange()
                 )
+                button.label = "🎒 背包滿"
                 await interaction.response.edit_message(embed=embed, view=self)
                 return
 
-            # 扣除體力
-            cursor.execute("UPDATE players SET stamina = stamina - ? WHERE user_id = ?", (self.stamina_cost, self.user_id))
-
-            # 判定成果 (差 0 格為完美 Perfect，給 2 個)
-            give_qty = 2 if diff == 0 else 1
-            result_title = "🎉 【完美校準！大豐收】" if diff == 0 else "🎣 【校準成功！】"
-
+            # 發放獎勵
+            give_qty = 1
             if inv_row:
                 cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (give_qty, self.user_id, self.caught_item))
             else:
-                cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (self.user_id, self.caught_item, give_qty))
+                cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (self.user_id, self.caught_item))
 
             found_gold = random.randint(5, 15) if self.caught_item == "廢鐵罐" else 0
             if found_gold > 0:
@@ -107,25 +137,16 @@ class FishingCalibrationView(discord.ui.View):
 
             conn.commit()
 
-            button.disabled = True
             button.label = "✨ 校準成功！"
             button.style = discord.ButtonStyle.success
 
-            bar = ""
-            for i in range(1, 11):
-                if i == hit_position:
-                    bar += "📍"
-                elif abs(i - self.sweet_spot) <= 1:
-                    bar += "🟩"
-                else:
-                    bar += "⬛"
-
             embed = discord.Embed(
-                title=result_title,
-                description=f"你在 **{self.spot_name}** 進行了精準的拉竿校準！\n\n"
-                            f"🎚️ **校準條**：`{bar}`\n"
-                            f"🎁 獲得產物：**{self.caught_item}** x `{give_qty}`",
-                color=discord.Color.green() if diff == 0 else discord.Color.blue()
+                title="🎉 【校準成功！釣魚成功】",
+                description=f"你在綠色判定區精準按下了按鈕！成功從 **{self.spot_name}** 釣起了寶貝。\n\n"
+                            f"🎚️ **最終指針位置**：{self.render_bar()}\n"
+                            f"🎁 獲得產物：**{self.caught_item}** x `{give_qty}`\n"
+                            f"🛠️ **魚竿耐久度 `-1`**",
+                color=discord.Color.green()
             )
             if found_gold > 0:
                 embed.add_field(name="💰 意外發現", value=f"在廢鐵罐裡找到了 **+{found_gold} G**！", inline=False)
@@ -140,15 +161,29 @@ class FishingCalibrationView(discord.ui.View):
             conn.close()
 
     async def on_timeout(self):
-        if not self.clicked:
+        if not self.is_finished:
+            self.is_finished = True
+            
+            # 超時也扣除耐久度與體力
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute("UPDATE players SET stamina = stamina - ?, rod_durability = max(0, rod_durability - 1) WHERE user_id = ?", (self.stamina_cost, self.user_id))
+                conn.commit()
+            except:
+                pass
+            finally:
+                cursor.close()
+                conn.close()
+
             for child in self.children:
                 child.disabled = True
-                child.label = "💥 校準失敗 (脫鉤)"
+                child.label = "⌛ 超時未按 (脫鉤)"
                 child.style = discord.ButtonStyle.secondary
 
             embed = discord.Embed(
-                title="❌ 【校準失敗·脫鉤逃跑】",
-                description="太可惜了！你在指針通過時來不及按下滑動按鈕，魚咬破魚線逃走了...",
+                title="❌ 【校準超時·魚兒逃跑】",
+                description="太慢了！你猶豫不決，指針晃出界外，魚咬破魚線逃走了...\n⚠️ **魚竿耐久度 `-1`**",
                 color=discord.Color.red()
             )
             if self.message:
@@ -161,7 +196,30 @@ class Fish(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="釣魚", description="前往指定的釣魚場揮竿釣魚")
+    async def start_pointer_animation(self, view, interaction):
+        try:
+            while not view.is_finished:
+                await asyncio.sleep(0.4)
+                if view.is_finished:
+                    break
+
+                view.pointer_pos += view.direction
+                if view.pointer_pos >= 10:
+                    view.direction = -1
+                elif view.pointer_pos <= 1:
+                    view.direction = 1
+
+                embed = interaction.message.embeds[0]
+                embed.description = f"水面傳來劇烈波動，大魚正在掙扎！\n\n" \
+                                    f"🎚️ **校準進度條**：{view.render_bar()}\n" \
+                                    f"⚠️ **請在指針（📍）移動到綠色區域（🟩）時按下下方按鈕！**"
+                
+                if view.message:
+                    await view.message.edit(embed=embed, view=view)
+        except Exception:
+            pass
+
+    @app_commands.command(name="釣魚", description="前往指定的釣魚場揮竿釣魚，進行第五人格風格校準 QTE")
     @app_commands.rename(spot="釣魚地點")
     @app_commands.choices(spot=[
         app_commands.Choice(name="新手河畔 (消耗 10 體力)", value="新手河畔"),
@@ -176,17 +234,34 @@ class Fish(commands.Cog):
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("SELECT hp, stamina, max_stamina FROM players WHERE user_id = ?", (user_id,))
+            # 💡 確保玩家資料表有 rod_durability 欄位（預設 20/20）
+            cursor.execute("SELECT hp, stamina, max_stamina, rod_durability FROM players WHERE user_id = ?", (user_id,))
             player = cursor.fetchone()
 
             if not player:
                 await interaction.followup.send("⚠️ 你尚未建立角色！請先使用 `/setup_roles` 選擇職業。", ephemeral=True)
                 return
 
-            hp, stamina, max_stamina = player
+            hp, stamina, max_stamina, rod_durability = player
+
+            # 如果資料庫沒這個欄位預設給個 20
+            if rod_durability is None:
+                rod_durability = 20
+                cursor.execute("UPDATE players SET rod_durability = 20 WHERE user_id = ?", (user_id,))
+                conn.commit()
 
             if hp <= 0:
                 await interaction.followup.send("⚠️ 你目前處於倒地狀態，無法釣魚！請先前往診所治療。", ephemeral=True)
+                return
+
+            # 🛠️ 檢查魚竿耐久度是否歸零
+            if rod_durability <= 0:
+                embed = discord.Embed(
+                    title="🎣 【魚竿已損壞】",
+                    description=f"你的釣魚竿耐久度已經耗盡 (`0/20`)，無法繼續揮竿！\n\n💡 請前往商店購買新魚竿或使用修復工具。",
+                    color=discord.Color.red()
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
                 return
 
             spot_info = FISHING_SPOTS.get(spot, FISHING_SPOTS["新手河畔"])
@@ -201,19 +276,23 @@ class Fish(commands.Cog):
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 return
 
-            # 決定釣到的魚獲
             items, weights = zip(*spot_info["drops"])
             caught_item = random.choices(items, weights=weights, k=1)[0]
 
             embed = discord.Embed(
-                title=f"🎣 【{spot}·魚訊浮現！】",
-                description=f"水面傳來陣陣波動，似乎有東西上鉤了！\n\n⚠️ **請在 3.5 秒內點擊下方按鈕進行指針校準！**",
+                title=f"🎣 【{spot}·注意校準！】",
+                description=f"水面傳來劇烈波動，大魚正在掙扎！\n\n"
+                            f"🎚️ **校準進度條**：等待指針開始晃動...\n"
+                            f"🛠️ **當前魚竿耐久**：`{rod_durability}/20`\n"
+                            f"⚠️ **請在指針（📍）移動到綠色區域（🟩）時按下下方按鈕！**",
                 color=discord.Color.blue()
             )
 
-            view = FishingCalibrationView(user_id, spot, caught_item, cost)
+            view = IdentityVCalibrationView(user_id, spot, caught_item, cost)
             sent_message = await interaction.followup.send(embed=embed, view=view, wait=True)
             view.message = sent_message
+
+            asyncio.create_task(self.start_pointer_animation(view, interaction))
 
         except Exception as e:
             conn.rollback()
@@ -222,6 +301,5 @@ class Fish(commands.Cog):
             cursor.close()
             conn.close()
 
-# 🌟 關鍵：所有 Cog 檔案都必須具備這個 setup 函式，否則會報 NoEntryPointError
 async def setup(bot):
     await bot.add_cog(Fish(bot))
