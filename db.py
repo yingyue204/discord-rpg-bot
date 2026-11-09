@@ -1098,7 +1098,23 @@ SHOP_ITEMS = {
     "乳牛": {"price": 300, "type": "animal", "description": "產出「牛奶」。"},
     "肉牛": {"price": 400, "type": "animal", "description": "產出「高級肉塊」。"},
     "豬": {"price": 250, "type": "animal", "description": "產出「五花肉」。"},
-    "雞": {"price": 150, "type": "animal", "description": "產出「雞蛋」。"}
+    "雞": {"price": 150, "type": "animal", "description": "產出「雞蛋」。"},
+    # 🎣 釣竿工具系列
+    "木製釣竿": {"price": 100, "type": "tool", "description": "基礎釣竿，解鎖「家園小溪」釣魚。"},
+    "強化金屬釣竿": {"price": 500, "type": "tool", "description": "堅固的釣竿，解鎖「神秘湖泊」釣魚。"},
+    "魔導釣竿": {"price": 2000, "type": "tool", "description": "帶有魔力的釣竿，解鎖「深海遺跡」釣魚。"},
+
+    # 🐟 漁獲與水產
+    "小蝦": {"price": 15, "type": "material", "description": "小小的海鮮配料。"},
+    "鮭魚": {"price": 60, "type": "material", "description": "高品質深海鮭魚。"},
+    "鰻魚": {"price": 80, "type": "material", "description": "肥美的鰻魚。"},
+    "鮪魚": {"price": 120, "type": "material", "description": "高級鮪魚肉塊。"},
+    "河豚": {"price": 150, "type": "material", "description": "處理需要極高技術的珍貴食材。"},
+    # 🐾 寵物與飼料系列商品（可加入 SHOP_ITEMS）
+    "寵物飼料": {"price": 20, "type": "consumable", "description": "營養滿分的寵物飼料，用來餵食心愛的寵物。"},
+    "小狗": {"price": 500, "type": "pet", "description": "忠誠的夥伴，解鎖後陪伴你左右。"},
+    "小貓": {"price": 500, "type": "pet", "description": "靈巧的貓咪，帶有神祕的招財體質。"},
+    "兔兔": {"price": 400, "type": "pet", "description": "溫馴可愛的兔子，療癒你的冒險心情。"}
 }
 
 shop_prices = {name: data["price"] for name, data in SHOP_ITEMS.items()}
@@ -1240,6 +1256,18 @@ def init_db(db_name="game.db"):
             feed_timestamp REAL,
             status TEXT DEFAULT 'ready',
             PRIMARY KEY (user_id, animal_index)
+        )
+    """)
+
+    # 🐾 寵物資料表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pets (
+            user_id INTEGER,
+            pet_name TEXT,
+            pet_type TEXT,
+            hunger INTEGER DEFAULT 100,
+            status TEXT DEFAULT '健康',
+            PRIMARY KEY (user_id, pet_name)
         )
     """)
 
