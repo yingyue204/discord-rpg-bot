@@ -1304,6 +1304,19 @@ except:
     except:
         pass
 
+    # 🛡️ 安全新增裝備耐久度欄位 (預設最大耐久 50)
+    try:
+        cursor.execute("ALTER TABLE players ADD COLUMN weapon_durability INTEGER DEFAULT 50")
+        conn.commit()
+    except:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE players ADD COLUMN armor_durability INTEGER DEFAULT 50")
+        conn.commit()
+    except:
+        pass
+
     conn.commit()
     cursor.close()
     conn.close()

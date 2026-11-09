@@ -47,13 +47,13 @@ class Adventure(commands.Cog):
             if stamina < stamina_cost:
                 embed = discord.Embed(
                     title="⚡ 【體力耗盡】",
-                    description=f"你的體力不足以支撐這次探索！\n當前體力：`{stamina}/{max_stamina}` (需要 `{stamina_cost}` 點)\n\n💡 請食用食物或等待體力恢復，才能繼續冒險！",
+                    description=f"你的體力不足以支撐這次探索！\n當前體力：`{stamina}/{max_stamina}` (需要 `{stamina_cost}` 點)\n\n💡 請食用食物或透過莊園休息來恢復體力，才能繼續冒險！",
                     color=discord.Color.orange()
                 )
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 return
 
-            # ⚔️ 25% 機率在冒險途中突發遭遇野生怪物！
+            # ⚔️ 25% 機率在冒險途中突發遭遇野生怪物伏擊！
             encounter_ambush = random.random() < 0.25
             if encounter_ambush:
                 # 扣除體力
@@ -74,7 +74,7 @@ class Adventure(commands.Cog):
 
                 embed = discord.Embed(
                     title="⚡ 【冒險突發狀況！遭遇敵人伏擊！】",
-                    description="你在搜刮廢墟時不小心驚動了潛伏的怪物，必須立刻做出反應！（此戰鬥不消耗 MP）",
+                    description="你在搜刮廢墟時不小心驚動了潛伏的怪物，必須立刻做出反應！",
                     color=discord.Color.red()
                 )
                 embed.add_field(name="🤖 突發怪物", value=f"**{monster_name}**", inline=True)
@@ -82,8 +82,8 @@ class Adventure(commands.Cog):
                 embed.add_field(name="⚔️ 攻擊力", value=f"`{monster_atk}` ATK", inline=True)
                 embed.set_footer(text="💡 擊敗突發敵人有更高的寶箱掉落機會！60秒未操作將自動過期。")
 
-                view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk, is_adventure_ambush=True)
-                sent_message = await interaction.followup.send(embed=embed, view=view)
+                view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk)
+                sent_message = await interaction.followup.send(embed=embed, view=view, ephemeral=True, wait=True)
                 view.message = sent_message
                 return
 
@@ -106,7 +106,7 @@ class Adventure(commands.Cog):
             if not item_row and current_slots >= max_slots:
                 embed = discord.Embed(
                     title="⚠️ 【背包空間已滿】",
-                    description=f"你在廢墟中找到了戰利品，但你的隨身背包已滿 (`{current_slots}/{max_slots}` 格)，無法再放下新種類的道具！\n\n💡 請先前往 `/存入倉庫` 整理背包後再出發冒險。",
+                    description=f"你在廢墟中找到了戰利品【{found_item}】，但你的隨身背包已滿 (`{current_slots}/{max_slots}` 格)，無法再放下新種類的道具！\n\n💡 請先前往 `/存入倉庫` 整理背包後再出發冒險。",
                     color=discord.Color.orange()
                 )
                 await interaction.followup.send(embed=embed, ephemeral=True)
@@ -125,7 +125,11 @@ class Adventure(commands.Cog):
             cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (found_gold, user_id))
             conn.commit()
 
-            embed = discord.Embed(title="🛡️ 【冒險搜刮成功】", color=discord.Color.green())
+            embed = discord.Embed(
+                title="🛡️ 【冒險搜刮成功】", 
+                description=f"你成功探索了這片區域並安全返回！ (體力: `{new_stamina}/{max_stamina}`)",
+                color=discord.Color.green()
+            )
             if got_chest:
                 embed.add_field(name="🎁 驚喜發現", value="**✨ 神秘寶箱 x 1**（極低機率幸運獲得！）", inline=True)
             else:
@@ -136,18 +140,14 @@ class Adventure(commands.Cog):
 
         except Exception as e:
             conn.rollback()
-            print(f"❌ 冒險指令發生錯誤: {e}")
-            try:
-                await interaction.followup.send(f"❌ 冒險過程發生未預期的錯誤：`{e}`", ephemeral=True)
-            except:
-                pass
+            await interaction.followup.send(f"❌ 冒險過程發生錯誤：`{e}`", ephemeral=True)
         finally:
-            # 🛡️ 確保無論成功或失敗，資料庫連線絕對會被釋放！
             try:
                 cursor.close()
                 conn.close()
             except:
                 pass
 
+# 🌟 必須具備 setup 函式以供機器人載入 Cog
 async def setup(bot):
     await bot.add_cog(Adventure(bot))

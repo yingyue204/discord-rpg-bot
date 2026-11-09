@@ -55,9 +55,11 @@ class BattleChoiceView(discord.ui.View):
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
-            # 取得玩家最新數值與裝備加成
+            # 取得玩家最新數值、裝備加成與裝備耐久度
             cursor.execute("""
-                SELECT hp, max_hp, atk, def, weapon_atk, armor_def, level, exp 
+                SELECT hp, max_hp, atk, def, weapon_atk, armor_def, level, exp, 
+                       COALESCE(weapon_durability, 50) as w_dur, 
+                       COALESCE(armor_durability, 50) as a_dur 
                 FROM players WHERE user_id = ?
             """, (self.user_id,))
             player = cursor.fetchone()
@@ -65,13 +67,17 @@ class BattleChoiceView(discord.ui.View):
                 await interaction.followup.send("⚠️ 找不到你的角色資料！", ephemeral=True)
                 return
 
-            hp, max_hp, base_atk, base_def, weapon_atk, armor_def, level, exp = player
+            hp, max_hp, base_atk, base_def, weapon_atk, armor_def, level, exp, w_dur, a_dur = player
             total_atk = base_atk + (weapon_atk or 0)
             total_def = base_def + (armor_def or 0)
 
+            # 🛠️ 裝備破損判定 (若耐久歸零，能力值打 3 折)
+            real_atk = total_atk if w_dur > 0 else max(1, int(total_atk * 0.3))
+            real_def = total_def if a_dur > 0 else int(total_def * 0.3)
+
             # 1. 玩家攻擊回合
             if action == "attack":
-                player_dmg = max(5, total_atk - random.randint(0, 5))
+                player_dmg = max(5, real_atk - random.randint(0, 5))
                 action_desc = f"你對 **{self.monster_name}** 發動普通攻擊，造成了 `{player_dmg}` 點傷害！"
             
             elif action == "skill":
@@ -85,10 +91,14 @@ class BattleChoiceView(discord.ui.View):
                 cursor.execute("UPDATE players SET mp = mp - 15 WHERE user_id = ?", (self.user_id,))
                 conn.commit()
             
-                player_dmg = max(12, int(total_atk * 1.5) - random.randint(0, 3))
+                player_dmg = max(12, int(real_atk * 1.5) - random.randint(0, 3))
                 action_desc = f"你消耗 15 MP 施放強力技能，對 **{self.monster_name}** 造成了 `{player_dmg}` 點重創！"
 
             self.monster_hp -= player_dmg
+
+            # 🛠️ 消耗 1 點武器耐久度
+            new_w_dur = max(0, w_dur - 1)
+            cursor.execute("UPDATE players SET weapon_durability = ? WHERE user_id = ?", (new_w_dur, self.user_id))
 
             # 2. 檢查怪物是否死亡（戰鬥勝利）
             if self.monster_hp <= 0:
@@ -128,7 +138,6 @@ class BattleChoiceView(discord.ui.View):
                     player_row = cursor.fetchone()
                     max_slots = player_row["max_bag_slots"] if player_row and "max_bag_slots" in player_row.keys() and player_row["max_bag_slots"] else 20
 
-                    # 若為新道具且背包已滿，則提示背包滿，戰利品未放入
                     if not row and current_slots >= max_slots:
                         reward_text += f"\n⚠️ **戰利品掉落【{dropped_item}】，但隨身背包已滿 (`{current_slots}/{max_slots}`)，不小心遺失在荒野中！**"
                     else:
@@ -140,11 +149,31 @@ class BattleChoiceView(discord.ui.View):
 
                 conn.commit()
 
+                for child in self.children:
+                    child.disabled = True
+
+                embed = discord.Embed(
+                    title=f"⚔️ 【戰鬥勝利！成功擊敗 {self.monster_name}】",
+                    description=f"{action_desc}\n\n{reward_text}\n\n🛠️ **戰後武器耐久**：`{new_w_dur}/50`",
+                    color=discord.Color.green()
+                )
+                if new_w_dur == 0:
+                    embed.add_field(name="⚠️ 裝備警告", value="你的武器已經破損，攻擊力大幅下降！請盡快前往鐵匠鋪修復。", inline=False)
+
+                if self.message:
+                    await self.message.edit(embed=embed, view=self)
+                else:
+                    await interaction.edit_original_response(embed=embed, view=self)
+                self.stop()
+                return
+
             # 3. 怪物反擊回合
-            monster_dmg = max(1, self.monster_atk - int(total_def * 0.4))
+            monster_dmg = max(1, self.monster_atk - int(real_def * 0.4))
             hp = max(0, hp - monster_dmg)
-        
-            cursor.execute("UPDATE players SET hp = ? WHERE user_id = ?", (hp, self.user_id))
+            
+            # 🛠️ 消耗 1 點防具耐久度
+            new_a_dur = max(0, a_dur - 1)
+            cursor.execute("UPDATE players SET hp = ?, armor_durability = ? WHERE user_id = ?", (hp, new_a_dur, self.user_id))
             conn.commit()
 
             # 4. 檢查玩家是否倒地（當下送醫機制）
@@ -169,13 +198,19 @@ class BattleChoiceView(discord.ui.View):
                 return
 
             # 5. 更新戰鬥面板（繼續下一回合）
+            turn_desc = f"{action_desc}\n💥 **{self.monster_name}** 反擊造成了 `{monster_dmg}` 點傷害！"
+            if new_w_dur == 0:
+                turn_desc += "\n⚠️ *你的武器已破損！*"
+            if new_a_dur == 0:
+                turn_desc += "\n⚠️ *你的防具已破裂！*"
+
             embed = discord.Embed(
                 title="⚔️ 【回合戰鬥進行中】",
-                description=action_desc,
+                description=turn_desc,
                 color=discord.Color.gold()
             )
             embed.add_field(name="🤖 怪物狀態", value=f"**{self.monster_name}**\n❤️ 剩餘血量：`{self.monster_hp}` HP", inline=True)
-            embed.add_field(name="🛡️ 你的狀態", value=f"❤️ 血量：`{hp}/{max_hp}`\n⚔️ 攻擊力：`{total_atk}`", inline=True)
+            embed.add_field(name="🛡️ 你的狀態", value=f"❤️ 血量：`{hp}/{max_hp}`\n🛠️ 武器耐久：`{new_w_dur}/50`\n🛡️ 防具耐久：`{new_a_dur}/50`", inline=True)
             embed.set_footer(text="💡 60秒未操作將自動過期。")
 
             if self.message:
@@ -204,7 +239,7 @@ class Battle(commands.Cog):
 
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT role_name, hp, max_hp FROM players WHERE user_id = ?", (user_id,))
+        cursor.execute("SELECT role_name, hp, max_hp, COALESCE(weapon_durability, 50), COALESCE(armor_durability, 50) FROM players WHERE user_id = ?", (user_id,))
         player = cursor.fetchone()
         cursor.close()
         conn.close()
@@ -222,6 +257,8 @@ class Battle(commands.Cog):
         monster_hp = random.randint(45, 75)
         monster_atk = random.randint(10, 22)
 
+        w_dur, a_dur = player[3], player[4]
+
         embed = discord.Embed(
             title="⚔️ 【遭遇野生怪物！】",
             description="你在荒野中鎖定了一隻目標，準備迎戰！",
@@ -230,6 +267,7 @@ class Battle(commands.Cog):
         embed.add_field(name="🤖 目標怪物", value=f"**{monster_name}**", inline=True)
         embed.add_field(name="❤️ 血量", value=f"`{monster_hp}` HP", inline=True)
         embed.add_field(name="⚔️ 攻擊力", value=f"`{monster_atk}` ATK", inline=True)
+        embed.add_field(name="🛠️ 當前裝備狀況", value=f"武器耐久: `{w_dur}/50`\n防具耐久: `{a_dur}/50`", inline=False)
         embed.set_footer(text="💡 60秒未操作將自動過期。")
 
         view = BattleChoiceView(user_id, monster_name, monster_hp, monster_atk)
