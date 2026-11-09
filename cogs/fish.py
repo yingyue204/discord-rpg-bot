@@ -46,7 +46,6 @@ class IdentityVCalibrationView(discord.ui.View):
         self.caught_item = caught_item
         self.stamina_cost = stamina_cost
         
-        self.is_finished = False
         self.message = None
         self.green_zones = [4, 5, 6]
         
@@ -70,14 +69,11 @@ class IdentityVCalibrationView(discord.ui.View):
             await interaction.response.send_message("⚠️ 這不是你的釣竿！", ephemeral=True)
             return
 
-        if self.is_finished:
+        # 使用內建的 is_finished() 判斷
+        if self.is_finished():
             return
 
-        self.is_finished = True
-        try:
-            self.stop()
-        except:
-            pass
+        self.stop()
 
         await interaction.response.defer()
 
@@ -153,7 +149,6 @@ class IdentityVCalibrationView(discord.ui.View):
             await interaction.edit_original_response(embed=embed, view=self)
 
         except Exception as e:
-            # 💡 這行會把最詳細的錯誤行數印在後台主控台
             traceback.print_exc()
             conn.rollback()
             try:
@@ -165,9 +160,7 @@ class IdentityVCalibrationView(discord.ui.View):
             conn.close()
 
     async def on_timeout(self):
-        if not self.is_finished:
-            self.is_finished = True
-            
+        if not self.is_finished():
             conn = get_db_connection()
             cursor = conn.cursor()
             try:
@@ -201,9 +194,9 @@ class Fish(commands.Cog):
 
     async def start_pointer_animation(self, view, interaction):
         try:
-            while not view.is_finished:
+            while not view.is_finished():
                 await asyncio.sleep(0.4)
-                if view.is_finished:
+                if view.is_finished():
                     break
 
                 view.pointer_pos += view.direction
