@@ -60,44 +60,73 @@ class RanchView(discord.ui.View):
 
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT animal_index, animal_type, feed_timestamp FROM ranch_animals WHERE user_id = ?", (self.user_id,))
-        animals = cursor.fetchall()
+        try:
+            cursor.execute("SELECT animal_index, animal_type, feed_timestamp FROM ranch_animals WHERE user_id = ?", (self.user_id,))
+            animals = cursor.fetchall()
 
-        now = time.time()
-        harvested_items = {}
+            now = time.time()
+            harvested_items = {}
+            ready_indices = []
 
-        for a in animals:
-            idx, aname, feed_time = a["animal_index"], a["animal_type"], a["feed_timestamp"]
-            req_time = ANIMAL_TYPES[aname]["time"]
+            for a in animals:
+                idx, aname, feed_time = a["animal_index"], a["animal_type"], a["feed_timestamp"]
+                req_time = ANIMAL_TYPES[aname]["time"]
 
-            if now >= (feed_time + req_time):
-                product = ANIMAL_TYPES[aname]["product"]
-                harvested_items[product] = harvested_items.get(product, 0) + 1
-                
-                # 重置計時器，讓動物進入下一輪生產
-                cursor.execute("UPDATE ranch_animals SET feed_timestamp = ? WHERE user_id = ? AND animal_index = ?", (now, self.user_id, idx))
+                if now >= (feed_time + req_time):
+                    product = ANIMAL_TYPES[aname]["product"]
+                    harvested_items[product] = harvested_items.get(product, 0) + 1
+                    ready_indices.append(idx)
 
-        if not harvested_items:
+            if not harvested_items:
+                await interaction.response.send_message("⏳ 目前沒有任何動物成熟可以收穫喔！", ephemeral=True)
+                return
+
+            # 📦 背包容量檢查 (預設 20 格種類上限)
+            cursor.execute("SELECT COUNT(*) as slots FROM inventory WHERE user_id = ? AND quantity > 0", (self.user_id,))
+            current_slots = cursor.fetchone()["slots"]
+
+            cursor.execute("SELECT max_bag_slots FROM players WHERE user_id = ?", (self.user_id,))
+            player_row = cursor.fetchone()
+            max_slots = player_row["max_bag_slots"] if player_row and "max_bag_slots" in player_row.keys() and player_row["max_bag_slots"] else 20
+
+            # 檢查收穫的新種類是否會超過背包格數
+            new_item_types = 0
+            for prod in harvested_items.keys():
+                cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (self.user_id, prod))
+                inv_row = cursor.fetchone()
+                if not inv_row:
+                    new_item_types += 1
+
+            if current_slots + new_item_types > max_slots:
+                await interaction.response.send_message(
+                    f"⚠️ 你的隨身背包空間不足 (`{current_slots}/{max_slots}` 格)！收穫產物會超過背包容量限制。\n\n💡 請先前往 `/存入倉庫` 整理背包後再進行收穫。",
+                    ephemeral=True
+                )
+                return
+
+            # 將收穫物放入背包並重置動物時間
+            reward_text = ""
+            for prod, qty in harvested_items.items():
+                cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (self.user_id, prod))
+                row = cursor.fetchone()
+                if row:
+                    cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (qty, self.user_id, prod))
+                else:
+                    cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (self.user_id, prod, qty))
+                reward_text += f"- **{prod}** x `{qty}`\n"
+
+            for idx in ready_indices:
+                cursor.execute("UPDATE ranch_animals SET feed_timestamp = ?, status = 'growing' WHERE user_id = ? AND animal_index = ?", (now, self.user_id, idx))
+
+            conn.commit()
+            await interaction.response.send_message(f"🎉 **收穫成功！** 你從牧場獲得了以下產物：\n{reward_text}", ephemeral=True)
+
+        except Exception as e:
+            conn.rollback()
+            await interaction.response.send_message(f"❌ 收穫失敗：`{e}`", ephemeral=True)
+        finally:
+            cursor.close()
             conn.close()
-            await interaction.response.send_message("⏳ 目前沒有任何動物成熟可以收穫喔！", ephemeral=True)
-            return
-
-        # 將收穫物放入背包
-        reward_text = ""
-        for prod, qty in harvested_items.items():
-            cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (self.user_id, prod))
-            row = cursor.fetchone()
-            if row:
-                cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (qty, self.user_id, prod))
-            else:
-                cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (self.user_id, prod, qty))
-            reward_text += f"- **{prod}** x `{qty}`\n"
-
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        await interaction.response.send_message(f"🎉 **收穫成功！** 你從牧場獲得了以下產物：\n{reward_text}", ephemeral=True)
 
 class Ranch(commands.Cog):
     def __init__(self, bot):
@@ -149,43 +178,42 @@ class Ranch(commands.Cog):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # 檢查玩家與金幣
-        cursor.execute("SELECT role_name, gold FROM players WHERE user_id = ?", (user_id,))
-        player = cursor.fetchone()
-        
-        if not player or not player["role_name"]:
+        try:
+            # 檢查玩家與金幣
+            cursor.execute("SELECT role_name, gold FROM players WHERE user_id = ?", (user_id,))
+            player = cursor.fetchone()
+            
+            if not player or not player["role_name"]:
+                await interaction.followup.send("⚠️ 請先建立角色才能使用牧場！", ephemeral=True)
+                return
+
+            if player["gold"] < cost:
+                await interaction.followup.send(f"❌ 購買 **{動物種類}** 需要 `{cost} G`，你的金幣不足！（目前有 `{player['gold']} G`）", ephemeral=True)
+                return
+
+            # 檢查該柵欄是否已有動物
+            cursor.execute("SELECT * FROM ranch_animals WHERE user_id = ? AND animal_index = ?", (user_id, 柵欄編號))
+            existing = cursor.fetchone()
+            if existing:
+                await interaction.followup.send(f"⚠️ 柵欄 `{柵欄編號}` 已經有動物在裡面了！", ephemeral=True)
+                return
+
+            # 扣除金幣並放入動物
+            cursor.execute("UPDATE players SET gold = gold - ? WHERE user_id = ?", (cost, user_id))
+            cursor.execute("""
+                INSERT INTO ranch_animals (user_id, animal_index, animal_type, feed_timestamp, status)
+                VALUES (?, ?, ?, ?, 'ready')
+            """, (user_id, 柵欄編號, 動物種類, time.time()))
+
+            conn.commit()
+            await interaction.followup.send(f"✅ 成功花費 `{cost} G` 購入 **{動物種類}** 並安置在第 `{柵欄編號}` 個柵欄！", ephemeral=True)
+
+        except Exception as e:
+            conn.rollback()
+            await interaction.followup.send(f"❌ 購買動物失敗：`{e}`", ephemeral=True)
+        finally:
             cursor.close()
             conn.close()
-            await interaction.followup.send("⚠️ 請先建立角色才能使用牧場！", ephemeral=True)
-            return
-
-        if player["gold"] < cost:
-            cursor.close()
-            conn.close()
-            await interaction.followup.send(f"❌ 購買 **{動物種類}** 需要 `{cost} G`，你的金幣不足！（目前有 `{player['gold']} G`）", ephemeral=True)
-            return
-
-        # 檢查該柵欄是否已有動物
-        cursor.execute("SELECT * FROM ranch_animals WHERE user_id = ? AND animal_index = ?", (user_id, 柵欄編號))
-        existing = cursor.fetchone()
-        if existing:
-            cursor.close()
-            conn.close()
-            await interaction.followup.send(f"⚠️ 柵欄 `{柵欄編號}` 已經有動物在裡面了！", ephemeral=True)
-            return
-
-        # 扣除金幣並放入動物
-        cursor.execute("UPDATE players SET gold = gold - ? WHERE user_id = ?", (cost, user_id))
-        cursor.execute("""
-            INSERT INTO ranch_animals (user_id, animal_index, animal_type, feed_timestamp, status)
-            VALUES (?, ?, ?, ?, 'ready')
-        """, (user_id, 柵欄編號, 動物種類, time.time()))
-
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        await interaction.followup.send(f"✅ 成功花費 `{cost} G` 購入 **{動物種類}** 並安置在第 `{柵欄編號}` 個柵欄！", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Ranch(bot))

@@ -69,13 +69,35 @@ class FishPullView(discord.ui.View):
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
+            # 📦 背包容量檢查 (最高 20 格種類上限)
+            cursor.execute("SELECT COUNT(*) as slots FROM inventory WHERE user_id = ? AND quantity > 0", (self.user_id,))
+            current_slots = cursor.fetchone()["slots"]
+
+            cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (self.user_id, self.caught_item))
+            inv_row = cursor.fetchone()
+
+            cursor.execute("SELECT max_bag_slots FROM players WHERE user_id = ?", (self.user_id,))
+            player_row = cursor.fetchone()
+            max_slots = player_row["max_bag_slots"] if player_row and "max_bag_slots" in player_row.keys() and player_row["max_bag_slots"] else 20
+
+            # 若此物品為新種類且背包格數已滿，則拒絕放入背包
+            if not inv_row and current_slots >= max_slots:
+                button.disabled = True
+                button.label = "🎒 背包空間不足"
+                button.style = discord.ButtonStyle.secondary
+
+                embed = discord.Embed(
+                    title="⚠️ 【背包空間已滿】",
+                    description=f"你成功拉起了 **{self.caught_item}**，但你的隨身背包已滿 (`{current_slots}/{max_slots}` 格)！\n\n💡 請先使用 `/存入倉庫` 將多餘物品放入莊園倉庫後再試。",
+                    color=discord.Color.orange()
+                )
+                await interaction.response.edit_message(embed=embed, view=self)
+                return
+
             # 1. 扣除體力
             cursor.execute("UPDATE players SET stamina = stamina - ? WHERE user_id = ?", (self.stamina_cost, self.user_id))
 
             # 2. 發放獎勵
-            cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (self.user_id, self.caught_item))
-            inv_row = cursor.fetchone()
-
             if inv_row:
                 cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (self.user_id, self.caught_item))
             else:

@@ -116,31 +116,29 @@ class BattleChoiceView(discord.ui.View):
 
                 reward_text = f"💰 獲得金幣：`+{gold_reward} G`\n✨ 獲得經驗：`+80 EXP`{level_up_msg}"
 
+                # 📦 戰利品背包容量檢查
                 if dropped_item:
+                    cursor.execute("SELECT COUNT(*) as slots FROM inventory WHERE user_id = ? AND quantity > 0", (self.user_id,))
+                    current_slots = cursor.fetchone()["slots"]
+
                     cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (self.user_id, dropped_item))
                     row = cursor.fetchone()
-                    if row:
-                        cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (self.user_id, dropped_item))
+
+                    cursor.execute("SELECT max_bag_slots FROM players WHERE user_id = ?", (self.user_id,))
+                    player_row = cursor.fetchone()
+                    max_slots = player_row["max_bag_slots"] if player_row and "max_bag_slots" in player_row.keys() and player_row["max_bag_slots"] else 20
+
+                    # 若為新道具且背包已滿，則提示背包滿，戰利品未放入
+                    if not row and current_slots >= max_slots:
+                        reward_text += f"\n⚠️ **戰利品掉落【{dropped_item}】，但隨身背包已滿 (`{current_slots}/{max_slots}`)，不小心遺失在荒野中！**"
                     else:
-                        cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (self.user_id, dropped_item))
-                    reward_text += f"\n🎁 獲得戰利品：**{dropped_item}** x `1`"
+                        if row:
+                            cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (self.user_id, dropped_item))
+                        else:
+                            cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (self.user_id, dropped_item))
+                        reward_text += f"\n🎁 獲得戰利品：**{dropped_item}** x `1`"
 
                 conn.commit()
-
-                for child in self.children:
-                    child.disabled = True
-
-                embed = discord.Embed(
-                    title="🎉 【戰鬥勝利！】",
-                    description=f"你成功擊敗了 **{self.monster_name}**！\n\n{action_desc}\n\n**【戰利品結算】**\n{reward_text}",
-                    color=discord.Color.green()
-                )
-                if self.message:
-                    await self.message.edit(embed=embed, view=self)
-                else:
-                    await interaction.edit_original_response(embed=embed, view=self)
-                self.stop()
-                return
 
             # 3. 怪物反擊回合
             monster_dmg = max(1, self.monster_atk - int(total_def * 0.4))

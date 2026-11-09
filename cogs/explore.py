@@ -108,13 +108,15 @@ class Explore(commands.Cog):
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 return
 
-            new_stamina = stamina - stamina_cost
-            cursor.execute("UPDATE players SET stamina = ? WHERE user_id = ?", (new_stamina, user_id))
-            conn.commit()
-
             map_info = MAP_DATA.get(location, MAP_DATA["新手廢墟"])
 
+            # ⚔️ 遭遇敵人伏擊判定
             if random.random() < map_info["monster_chance"]:
+                # 扣除體力
+                new_stamina = stamina - stamina_cost
+                cursor.execute("UPDATE players SET stamina = ? WHERE user_id = ?", (new_stamina, user_id))
+                conn.commit()
+
                 cursor.close()
                 conn.close()
 
@@ -140,14 +142,36 @@ class Explore(commands.Cog):
                 view.message = sent_message
                 return
 
+            # 🎒 決定平安搜刮掉落物與金幣
             found_gold = random.randint(map_info["gold_range"][0], map_info["gold_range"][1])
-            
             items, weights = zip(*map_info["drops"])
             found_item = random.choices(items, weights=weights, k=1)[0]
 
+            # 📦 背包容量檢查 (預設 20 格種類上限)
+            cursor.execute("SELECT COUNT(*) as slots FROM inventory WHERE user_id = ? AND quantity > 0", (user_id,))
+            current_slots = cursor.fetchone()["slots"]
+
             cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, found_item))
             item_row = cursor.fetchone()
-            
+
+            cursor.execute("SELECT max_bag_slots FROM players WHERE user_id = ?", (user_id,))
+            player_row = cursor.fetchone()
+            max_slots = player_row["max_bag_slots"] if player_row and "max_bag_slots" in player_row.keys() and player_row["max_bag_slots"] else 20
+
+            # 若背包已滿且獲得的是新道具種類，則拒絕發放
+            if not item_row and current_slots >= max_slots:
+                embed = discord.Embed(
+                    title="⚠️ 【背包空間已滿】",
+                    description=f"你在 **{location}** 找到了 **{found_item}**，但你的隨身背包已滿 (`{current_slots}/{max_slots}` 格)，無法再放下新種類的道具！\n\n💡 請先前往 `/存入倉庫` 整理背包後再出發探索。",
+                    color=discord.Color.orange()
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                return
+
+            # 扣除體力與發放獎勵
+            new_stamina = stamina - stamina_cost
+            cursor.execute("UPDATE players SET stamina = ? WHERE user_id = ?", (new_stamina, user_id))
+
             if item_row:
                 cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, found_item))
             else:
@@ -160,7 +184,7 @@ class Explore(commands.Cog):
             embed.description = map_info["description"]
             embed.add_field(name="📦 獲得道具", value=f"**{found_item}** x `1`", inline=True)
             embed.add_field(name="💰 獲得金幣", value=f"**+{found_gold} G**", inline=True)
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
         except Exception as e:
             conn.rollback()

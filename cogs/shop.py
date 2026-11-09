@@ -22,14 +22,14 @@ class Shop(commands.Cog):
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("SELECT item_name, quantity FROM inventory WHERE user_id = ?", (user_id,))
+            cursor.execute("SELECT item_name, quantity FROM inventory WHERE user_id = ? AND quantity > 0", (user_id,))
             rows = cursor.fetchall()
             choices = []
             for row in rows:
                 name = row["item_name"]
                 qty = row["quantity"]
                 display_name = f"{name} (擁有: {qty} 個)"
-                if current.lower() in name.lower():
+                if current.lower() in name.lower() or current == "":
                     choices.append(app_commands.Choice(name=display_name, value=name))
             return choices[:25]
         except Exception:
@@ -45,11 +45,14 @@ class Shop(commands.Cog):
     async def system_shop(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         try:
-            # 🌟 將所有商品整理成文字描述，避免超過 Embed 25 個欄位的限制
             desc = "以下是目前販售的商品清單：\n請使用 `/購買` 或 `/賣出` 指令來進行交易！\n\n"
             
             for name, data in SHOP_ITEMS.items():
-                desc += f"• **{name}** — `{data['price']} G`\n  └ *{data['description']}*\n"
+                line = f"• **{name}** — `{data['price']} G`\n  └ *{data['description']}*\n"
+                if len(desc) + len(line) > 4000:
+                    desc += "\n*(商品項目眾多，更多內容請直接輸入 `/購買` 查看下拉選單)*"
+                    break
+                desc += line
 
             embed = discord.Embed(
                 title="🛒 【系統商店】",

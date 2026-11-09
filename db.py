@@ -1271,15 +1271,21 @@ def init_db(db_name="game.db"):
         )
     """)
 
-    # 🏠 個人莊園資料表
+    # 📦 莊園倉庫資料表
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS manors (
-            user_id INTEGER PRIMARY KEY,
-            manor_lvl INTEGER DEFAULT 1,
-            room_unlocked TEXT DEFAULT '基礎臥室',
-            last_harvest TEXT DEFAULT '2026-01-01 00:00:00'
+        CREATE TABLE IF NOT EXISTS manor_storage (
+            user_id INTEGER,
+            item_name TEXT,
+            quantity INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, item_name)
         )
     """)
+    
+    # 檢查 players 是否有 max_bag_slots (預設隨身背包 20 格)
+    try:
+        cursor.execute("ALTER TABLE players ADD COLUMN max_bag_slots INTEGER DEFAULT 20")
+    except:
+        pass
 
     conn.commit()
     cursor.close()
@@ -1381,7 +1387,7 @@ def sell_item_to_shop_in_db(user_id: int, item_name: str, quantity: int):
         cursor.close()
         conn.close()
 
-# ==================== 🍳 料理製作與升級邏輯 ====================
+# ==================== 🍳 料理製作與升級邏輯 (含背包容量限制) ====================
 def cook_recipe_in_db(user_id: int, recipe_name: str):
     if recipe_name not in RECIPE_DATABASE:
         return False, f"❌ 找不到食譜 **{recipe_name}**！"
@@ -1394,15 +1400,19 @@ def cook_recipe_in_db(user_id: int, recipe_name: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT cooking_level FROM players WHERE user_id = ?", (user_id,))
+        # 1. 檢查玩家等級與背包上限設定
+        cursor.execute("SELECT cooking_level, max_bag_slots FROM players WHERE user_id = ?", (user_id,))
         player = cursor.fetchone()
         if not player:
             return False, "❌ 你尚未建立角色！"
         
         current_level = player["cooking_level"] or 1
+        max_slots = player["max_bag_slots"] if "max_bag_slots" in player.keys() and player["max_bag_slots"] else 20
+
         if current_level < required_level:
             return False, f"❌ 料理台等級不足！製作 **{recipe_name}** 需要 Lv.{required_level}。"
 
+        # 2. 檢查材料是否充足
         for ing_name, req_qty in ingredients.items():
             cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, ing_name))
             inv = cursor.fetchone()
@@ -1410,18 +1420,29 @@ def cook_recipe_in_db(user_id: int, recipe_name: str):
             if current_qty < req_qty:
                 return False, f"❌ 素材不足！缺少 **{ing_name}**（需要 `{req_qty}` 個）。"
 
-        for ing_name, req_qty in ingredients.items():
-            cursor.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?", (req_qty, user_id, ing_name))
+        # 3. 📦 檢查隨身背包容量上限 (最高 20 格種類限制)
+        cursor.execute("SELECT COUNT(*) as current_slots FROM inventory WHERE user_id = ? AND quantity > 0", (user_id,))
+        current_slots = cursor.fetchone()["current_slots"]
 
         cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, output_item))
         out_inv = cursor.fetchone()
+
+        # 若成品為新種類且背包格子已滿
+        if not out_inv and current_slots >= max_slots:
+            return False, f"⚠️ 你的隨身背包已滿 (`{current_slots}/{max_slots}` 格)，無法放下新完成的料理【{output_item}】！\n💡 請先使用 `/存入倉庫` 整理背包。"
+
+        # 4. 扣除材料
+        for ing_name, req_qty in ingredients.items():
+            cursor.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?", (req_qty, user_id, ing_name))
+
+        # 5. 發放成品
         if out_inv:
             cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, output_item))
         else:
             cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, output_item))
 
         conn.commit()
-        return True, f"🍳 成功烹調出 **{output_item}**！"
+        return True, f"🍳 成功烹調出 **{output_item}**！已放入隨身背包。"
     except Exception as e:
         conn.rollback()
         return False, f"❌ 烹飪發生錯誤：`{e}`"
@@ -1486,6 +1507,57 @@ def reset_player_data(user_id: int):
     except Exception as e:
         conn.rollback()
         raise e
+    finally:
+        cursor.close()
+        conn.close()
+
+def buy_item_in_db(user_id, item_name, quantity):
+    if item_name not in SHOP_ITEMS:
+        return False, "❌ 商店中沒有這項商品！"
+
+    item_data = SHOP_ITEMS[item_name]
+    total_cost = item_data["price"] * quantity
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # 1. 檢查玩家金幣與背包上限
+        cursor.execute("SELECT gold, max_bag_slots FROM players WHERE user_id = ?", (user_id,))
+        player = cursor.fetchone()
+
+        if not player:
+            return False, "⚠️ 你尚未建立角色！請先使用 `/setup_roles` 選擇職業。"
+
+        max_slots = player["max_bag_slots"] if "max_bag_slots" in player.keys() and player["max_bag_slots"] else 20
+
+        if player["gold"] < total_cost:
+            return False, f"❌ 金幣不足！購買 `{quantity}` 個 **{item_name}** 需要 `{total_cost} G`，你只有 `{player['gold']} G`。"
+
+        # 2. 檢查背包空間 (防範超過 20 格種類上限)
+        cursor.execute("SELECT COUNT(*) as current_slots FROM inventory WHERE user_id = ? AND quantity > 0", (user_id,))
+        current_slots = cursor.fetchone()["current_slots"]
+
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        inv = cursor.fetchone()
+
+        # 如果背包裡沒有這項商品（是新種類），且格數已滿
+        if not inv and current_slots >= max_slots:
+            return False, f"⚠️ 你的隨身背包已滿 (`{current_slots}/{max_slots}` 格)！無法放入新商品 **{item_name}**。\n💡 請先使用 `/存入倉庫` 將多餘物品放入莊園倉庫。"
+
+        # 3. 扣款
+        cursor.execute("UPDATE players SET gold = gold - ? WHERE user_id = ?", (total_cost, user_id))
+
+        # 4. 增加背包物品
+        if inv:
+            cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (quantity, user_id, item_name))
+        else:
+            cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (user_id, item_name, quantity))
+
+        conn.commit()
+        return True, f"🎉 成功購買 **{item_name}** x `{quantity}`！共花費 `{total_cost} G`。"
+    except Exception as e:
+        conn.rollback()
+        return False, f"❌ 交易失敗：`{e}`"
     finally:
         cursor.close()
         conn.close()
