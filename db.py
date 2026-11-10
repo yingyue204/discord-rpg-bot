@@ -1,36 +1,298 @@
+import os
 import sqlite3
 import time
 import random
 from contextlib import contextmanager
 
+# 💡 自動確保 data 資料夾存在，避免部署/重啟時資料檔被清理或覆蓋
+DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+if not os.path.exists(DB_DIR):
+    os.makedirs(DB_DIR, exist_ok=True)
+
+DB_PATH = os.path.join(DB_DIR, "game.db")
+
+def get_db_connection(db_name=DB_PATH):
+    conn = sqlite3.connect(db_name, timeout=30.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    return conn
+
 @contextmanager
 def get_db():
-    conn = sqlite3.connect("game.db")
-    conn.row_factory = sqlite3.Row
+    conn = get_db_connection()
     cursor = conn.cursor()
     try:
         yield cursor
-        conn.commit()  # 成功時自動提交
+        conn.commit()
     except Exception as e:
-        conn.rollback()  # 發生錯誤時自動回滾
+        conn.rollback()
         raise e
     finally:
         cursor.close()
-        conn.close()   # 🔒 不管有沒有報錯，這裡絕對會自動關閉連線！
+        conn.close()
 
-# ⚔️ 戰鬥勝利的資料庫結算處理
+# ==================== 🛒 商城道具與定價表 ====================
+SHOP_ITEMS = {
+    "生命藥水": {"price": 30, "type": "consumable", "description": "基礎治療道具，使用後恢復 30 點生命值。"},
+    "急救包": {"price": 60, "type": "consumable", "description": "高效急救醫療包，使用後恢復 50 點生命值。"},
+    "魔力藥水": {"price": 40, "type": "consumable", "description": "補充精神力的藥劑，使用後恢復 20 點 MP。"},
+    "能量飲料": {"price": 75, "type": "consumable", "description": "高科技提神飲料，使用後瞬間恢復 40 點 MP。"},
+    "神秘寶箱": {"price": 200, "type": "special", "description": "內含各品質武器與防具的神秘寶箱。"},
+    
+    # 🌱 農場種子系列
+    "小麥種子": {"price": 10, "type": "seed", "description": "可以種植出小麥的基礎種子。"},
+    "番茄種子": {"price": 15, "type": "seed", "description": "可以種植出新鮮番茄的種子。"},
+    "高麗菜種子": {"price": 15, "type": "seed", "description": "可以種植出清脆高麗菜的種子。"},
+    "胡蘿蔔種子": {"price": 15, "type": "seed", "description": "可以種植出甜美胡蘿蔔的種子。"},
+    "蘋果種子": {"price": 20, "type": "seed", "description": "可以種植出多汁蘋果的種子。"},
+
+    # 🌾 原有材料與其他道具
+    "小麥": {"price": 20, "type": "material", "description": "基礎烘焙與麵食原料。"},
+    "米": {"price": 25, "type": "material", "description": "精製白米（也可在料理台由小麥加工製成）。"},
+    "番茄": {"price": 30, "type": "material", "description": "酸甜多汁的新鮮番茄。"},
+    "高麗菜": {"price": 30, "type": "material", "description": "清脆爽口的蔬菜。"},
+    "胡蘿蔔": {"price": 30, "type": "material", "description": "營養豐富的根莖蔬菜。"},
+    "蘋果": {"price": 35, "type": "material", "description": "香甜多汁的水果。"},
+    "香料": {"price": 40, "type": "material", "description": "去腥提味的關鍵調味料。"},
+    "蔥": {"price": 25, "type": "material", "description": "香氣十足的青蔥。"},
+    "鮮魚": {"price": 50, "type": "material", "description": "新鮮漁獲。"},
+    "生肉": {"price": 45, "type": "material", "description": "多種肉類料理的基礎原料。"},
+    "鐵塊": {"price": 200, "type": "upgrade", "description": "料理台升級至 Lv.2 的必要素材。"},
+    "魔導金屬": {"price": 1000, "type": "upgrade", "description": "料理台升級至 Lv.3 的必要素材。"},
+    "乳牛": {"price": 300, "type": "animal", "description": "產出「牛奶」。"},
+    "肉牛": {"price": 400, "type": "animal", "description": "產出「高級肉塊」。"},
+    "豬": {"price": 250, "type": "animal", "description": "產出「五花肉」。"},
+    "雞": {"price": 150, "type": "animal", "description": "產出「雞蛋」。"},
+
+    # 🎣 釣竿工具系列
+    "木製釣竿": {"price": 100, "type": "tool", "description": "基礎釣竿，解鎖「家園小溪」釣魚。"},
+    "強化金屬釣竿": {"price": 500, "type": "tool", "description": "堅固的釣竿，解鎖「神秘湖泊」釣魚。"},
+    "魔導釣竿": {"price": 2000, "type": "tool", "description": "帶有魔力的釣竿，解鎖「深海遺跡」釣魚。"},
+
+    # 🐟 漁獲與水產
+    "小蝦": {"price": 15, "type": "material", "description": "小小的海鮮配料。"},
+    "鮭魚": {"price": 60, "type": "material", "description": "高品質深海鮭魚。"},
+    "鰻魚": {"price": 80, "type": "material", "description": "肥美的鰻魚。"},
+    "鮪魚": {"price": 120, "type": "material", "description": "高級鮪魚肉塊。"},
+    "河豚": {"price": 150, "type": "material", "description": "處理需要極高技術的珍貴食材。"},
+
+    # 🐾 寵物與飼料系列商品
+    "寵物飼料": {"price": 20, "type": "consumable", "description": "營養滿分的寵物飼料，用來餵食心愛的寵物。"},
+    "小狗": {"price": 500, "type": "pet", "description": "忠誠的夥伴，解鎖後陪伴你左右。"},
+    "小貓": {"price": 500, "type": "pet", "description": "靈巧的貓咪，帶有神祕的招財體質。"},
+    "兔兔": {"price": 400, "type": "pet", "description": "溫馴可愛的兔子，療癒你的冒險心情。"}
+}
+
+shop_prices = {name: data["price"] for name, data in SHOP_ITEMS.items()}
+
+# ==================== 🍳 料理食譜與升級資料庫 ====================
+RECIPE_DATABASE = {
+    # 🌾 小麥加工區
+    "米": {"station_level": 1, "ingredients": {"小麥": 2}, "output": "米", "description": "在料理台將 2 個小麥加工研磨成 1 個米。"},
+
+    # 🍳 料理區 (Lv.1)
+    "義大利麵": {"station_level": 1, "ingredients": {"小麥": 2, "生肉": 1, "番茄": 1}, "output": "【料理】義大利麵", "description": "恢復 40 點生命與 20 點魔力。"},
+    "麵包": {"station_level": 1, "ingredients": {"小麥": 3}, "output": "【料理】麵包", "description": "恢復 25 點生命。"},
+    "香煎魚": {"station_level": 1, "ingredients": {"鮮魚": 1, "香料": 1}, "output": "【料理】香煎魚", "description": "恢復 35 點生命。"},
+    "壽司": {"station_level": 1, "ingredients": {"米": 2, "鮮魚": 1}, "output": "【料理】壽司", "description": "恢復 30 點生命與 15 點魔力。"},
+    "什錦飯": {"station_level": 1, "ingredients": {"米": 2, "生肉": 1, "高麗菜": 2}, "output": "【料理】什錦飯", "description": "恢復 50 點生命。"},
+    "熱狗麵包": {"station_level": 1, "ingredients": {"小麥": 2, "生肉": 1}, "output": "【料理】熱狗麵包", "description": "恢復 30 點生命。"},
+    "紅燒肉": {"station_level": 1, "ingredients": {"五花肉": 2, "香料": 1}, "output": "【料理】紅燒肉", "description": "恢復 60 點生命。"},
+    "包子": {"station_level": 1, "ingredients": {"小麥": 2, "生肉": 1}, "output": "【料理】包子", "description": "恢復 35 點生命。"},
+    "麵疙瘩": {"station_level": 1, "ingredients": {"小麥": 3, "番茄": 1}, "output": "【料理】麵疙瘩", "description": "恢復 30 點生命。"},
+    "蔥油餅": {"station_level": 1, "ingredients": {"小麥": 3, "蔥": 2}, "output": "【料理】蔥油餅", "description": "恢復 30 點生命。"},
+    "咖哩飯": {"station_level": 1, "ingredients": {"米": 2, "胡蘿蔔": 2, "生肉": 1}, "output": "【料理】咖哩飯", "description": "恢復 55 點生命與 20 點魔力。"},
+
+    # 🍳 料理區 (Lv.2)
+    "千層蛋糕": {"station_level": 2, "ingredients": {"小麥": 3, "雞蛋": 2, "牛奶": 2}, "output": "【料理】千層蛋糕", "description": "恢復 60 點魔力。"},
+    "香檳氣泡水": {"station_level": 2, "ingredients": {"蘋果": 3}, "output": "【料理】香檳氣泡水", "description": "恢復 40 點魔力。"},
+    "泡芙": {"station_level": 2, "ingredients": {"小麥": 2, "雞蛋": 2, "牛奶": 1}, "output": "【料理】泡芙", "description": "恢復 45 點魔力。"},
+    "燉飯": {"station_level": 2, "ingredients": {"米": 3, "生肉": 1, "高麗菜": 2}, "output": "【料理】燉飯", "description": "恢復 70 點生命。"},
+    "舒芙蕾": {"station_level": 2, "ingredients": {"雞蛋": 3, "牛奶": 2}, "output": "【料理】舒芙蕾", "description": "恢復 50 點魔力。"},
+    "披薩": {"station_level": 2, "ingredients": {"小麥": 3, "生肉": 2, "番茄": 1}, "output": "【料理】披薩", "description": "恢復 80 點生命。"},
+    "白醬意麵": {"station_level": 2, "ingredients": {"小麥": 2, "牛奶": 2, "生肉": 1}, "output": "【料理】白醬意麵", "description": "恢復 65 點生命與 30 點魔力。"},
+    "東坡肉": {"station_level": 2, "ingredients": {"五花肉": 3, "香料": 2}, "output": "【料理】東坡肉", "description": "恢復 90 點生命。"},
+
+    # 🍳 料理區 (Lv.3)
+    "紅酒燉牛肉": {"station_level": 3, "ingredients": {"高級肉塊": 2, "胡蘿蔔": 2, "番茄": 1, "香料": 1}, "output": "【料理】紅酒燉牛肉", "description": "恢復 120 點生命與 50 點魔力！"},
+    "牛肉麵": {"station_level": 3, "ingredients": {"小麥": 2, "高級肉塊": 2, "蔥": 1}, "output": "【料理】牛肉麵", "description": "恢復 100 點生命與 40 點魔力。"}
+}
+
+COOKING_STATION_UPGRADE_COST = {
+    2: {"gold": 1000, "item": "鐵塊", "qty": 5},
+    3: {"gold": 5000, "item": "魔導金屬", "qty": 3}
+}
+
+# ==================== 🛠️ 資料庫初始化與欄位防護 ====================
+def init_db(db_name=DB_PATH):
+    conn = get_db_connection(db_name)
+    cursor = conn.cursor()
+
+    # 1. 玩家主表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS players (
+            user_id INTEGER PRIMARY KEY,
+            role_name TEXT,
+            level INTEGER DEFAULT 1,
+            exp INTEGER DEFAULT 0,
+            hp INTEGER DEFAULT 100,
+            max_hp INTEGER DEFAULT 100,
+            mp INTEGER DEFAULT 50,
+            max_mp INTEGER DEFAULT 50,
+            stamina INTEGER DEFAULT 100,
+            max_stamina INTEGER DEFAULT 100,
+            atk INTEGER DEFAULT 25,
+            def INTEGER DEFAULT 10,
+            gold INTEGER DEFAULT 100,
+            weapon_name TEXT,
+            weapon_atk INTEGER DEFAULT 0,
+            armor_name TEXT,
+            armor_def INTEGER DEFAULT 0,
+            cooking_level INTEGER DEFAULT 1,
+            rod_durability INTEGER DEFAULT 20,
+            weapon_durability INTEGER DEFAULT 50,
+            armor_durability INTEGER DEFAULT 50,
+            max_bag_slots INTEGER DEFAULT 20,
+            last_mp_update INTEGER DEFAULT 0
+        )
+    """)
+
+    # 🛡️ 檢查與補充資料庫欄位
+    cursor.execute("PRAGMA table_info(players)")
+    columns = [column[1] for column in cursor.fetchall()]
+
+    required_columns = {
+        "role_name": "TEXT",
+        "level": "INTEGER DEFAULT 1",
+        "exp": "INTEGER DEFAULT 0",
+        "hp": "INTEGER DEFAULT 100",
+        "max_hp": "INTEGER DEFAULT 100",
+        "mp": "INTEGER DEFAULT 50",
+        "max_mp": "INTEGER DEFAULT 50",
+        "stamina": "INTEGER DEFAULT 100",
+        "max_stamina": "INTEGER DEFAULT 100",
+        "atk": "INTEGER DEFAULT 25",
+        "def": "INTEGER DEFAULT 10",
+        "gold": "INTEGER DEFAULT 100",
+        "weapon_name": "TEXT",
+        "weapon_atk": "INTEGER DEFAULT 0",
+        "armor_name": "TEXT",
+        "armor_def": "INTEGER DEFAULT 0",
+        "cooking_level": "INTEGER DEFAULT 1",
+        "rod_durability": "INTEGER DEFAULT 20",
+        "weapon_durability": "INTEGER DEFAULT 50",
+        "armor_durability": "INTEGER DEFAULT 50",
+        "max_bag_slots": "INTEGER DEFAULT 20",
+        "last_mp_update": "INTEGER DEFAULT 0"
+    }
+
+    for col_name, col_type in required_columns.items():
+        if col_name not in columns:
+            try:
+                cursor.execute(f"ALTER TABLE players ADD COLUMN {col_name} {col_type}")
+            except Exception:
+                pass
+
+    # 2. 玩家背包表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS inventory (
+            user_id INTEGER,
+            item_name TEXT,
+            quantity INTEGER,
+            PRIMARY KEY (user_id, item_name)
+        )
+    """)
+
+    # 3. 農場土地表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS farm_plots (
+            user_id INTEGER,
+            plot_index INTEGER,
+            crop_name TEXT,
+            ready_timestamp REAL,
+            status TEXT DEFAULT 'empty',
+            PRIMARY KEY (user_id, plot_index)
+        )
+    """)
+
+    # 4. 玩家已解鎖食譜表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS player_recipes (
+            user_id INTEGER,
+            recipe_name TEXT,
+            PRIMARY KEY (user_id, recipe_name)
+        )
+    """)
+
+    # 5. 牧場動物表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ranch_animals (
+            user_id INTEGER,
+            animal_index INTEGER,
+            animal_type TEXT,
+            feed_timestamp REAL,
+            status TEXT DEFAULT 'ready',
+            PRIMARY KEY (user_id, animal_index)
+        )
+    """)
+
+    # 6. 寵物資料表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pets (
+            user_id INTEGER,
+            pet_name TEXT,
+            pet_type TEXT,
+            hunger INTEGER DEFAULT 100,
+            status TEXT DEFAULT '健康',
+            PRIMARY KEY (user_id, pet_name)
+        )
+    """)
+
+    # 7. 個人莊園資料表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS manors (
+            user_id INTEGER PRIMARY KEY,
+            manor_lvl INTEGER DEFAULT 1,
+            room_unlocked TEXT DEFAULT '基礎臥室',
+            last_harvest TEXT DEFAULT '2026-01-01 00:00:00'
+        )
+    """)
+    
+    # 8. 莊園倉庫資料表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS manor_storage (
+            user_id INTEGER,
+            item_name TEXT,
+            quantity INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, item_name)
+        )
+    """)
+
+    # 9. 玩家市場資料表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS market_listings (
+            listing_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            seller_id INTEGER,
+            item_name TEXT,
+            price INTEGER,
+            quantity INTEGER
+        )
+    """)
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+# 確保載入模組時初始化
+init_db()
+
+# ==================== 🎮 玩家資料操作與戰鬥邏輯 ====================
 def process_battle_victory_in_db(user_id: int, gold_reward: int, exp_reward: int, dropped_item: str = None):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        # 1. 增加金幣
         cursor.execute("UPDATE players SET gold = gold + ? WHERE user_id = ?", (gold_reward, user_id))
         
-        # 2. 增加經驗值並處理升級（假設你有寫 gain_player_exp 函數）
-        # 這裡可以直接調用我們之前寫好的升級邏輯
-        # success_exp, exp_msg = gain_player_exp(user_id, exp_amount=exp_reward)
-        
-        # 3. 如果有掉落物，加入背包
         reward_text = f"💰 獲得金幣：`+{gold_reward} G`"
         if dropped_item:
             cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, dropped_item))
@@ -66,113 +328,6 @@ def get_player_status(user_id):
         cursor.close()
         conn.close()
 
-def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # 1. 玩家資料表
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS players (
-            user_id INTEGER PRIMARY KEY,
-            role_name TEXT,
-            level INTEGER DEFAULT 1,
-            exp INTEGER DEFAULT 0,
-            hp INTEGER,
-            max_hp INTEGER,
-            mp INTEGER,
-            max_mp INTEGER,
-            stamina INTEGER,
-            max_stamina INTEGER,
-            atk INTEGER,
-            def INTEGER,
-            gold INTEGER DEFAULT 100,
-            weapon_name TEXT,
-            weapon_atk INTEGER DEFAULT 0,
-            armor_name TEXT,
-            armor_def INTEGER DEFAULT 0,
-            cooking_level INTEGER DEFAULT 1
-        )
-    """)
-    
-    # 🛡️ 自動補上可能缺少的欄位（防止舊資料庫報錯）
-    cursor.execute("PRAGMA table_info(players)")
-    columns = [column[1] for column in cursor.fetchall()]
-    
-    if "level" not in columns:
-        cursor.execute("ALTER TABLE players ADD COLUMN level INTEGER DEFAULT 1")
-    if "exp" not in columns:
-        cursor.execute("ALTER TABLE players ADD COLUMN exp INTEGER DEFAULT 0")
-    if "cooking_level" not in columns:
-        cursor.execute("ALTER TABLE players ADD COLUMN cooking_level INTEGER DEFAULT 1")
-
-    # 2. 其他表格初始化（背包、農場、食譜、牧場等）
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS inventory (
-            user_id INTEGER,
-            item_name TEXT,
-            quantity INTEGER,
-            PRIMARY KEY (user_id, item_name)
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS farm_plots (
-            user_id INTEGER,
-            plot_index INTEGER,
-            crop_name TEXT,
-            ready_timestamp REAL,
-            status TEXT DEFAULT 'empty',
-            PRIMARY KEY (user_id, plot_index)
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS player_recipes (
-            user_id INTEGER,
-            recipe_name TEXT,
-            PRIMARY KEY (user_id, recipe_name)
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS ranch_animals (
-            user_id INTEGER,
-            animal_index INTEGER,
-            animal_type TEXT,
-            feed_timestamp REAL,
-            status TEXT DEFAULT 'ready',
-            PRIMARY KEY (user_id, animal_index)
-        )
-    """)
-
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-    # 2. 建立背包表格
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS inventory (
-            user_id INTEGER,
-            item_name TEXT,
-            quantity INTEGER,
-            PRIMARY KEY (user_id, item_name)
-        )
-    """)
-        
-    conn.commit()
-
-    # 3. 防呆機制：如果舊資料庫沒有 last_mp_update 欄位，自動幫它補上
-    try:
-        cursor.execute("ALTER TABLE players ADD COLUMN last_mp_update INTEGER DEFAULT 0")
-        conn.commit()
-    except Exception:
-        pass # 欄位已存在時會直接略過
-
-    finally:
-        cursor.close()
-        conn.close()
-
-# 🔄 自動計算並更新玩家自然回魔
 def update_and_get_mp(user_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -207,7 +362,6 @@ def update_and_get_mp(user_id: int):
         cursor.close()
         conn.close()
 
-# ⚡ 消耗 MP 時同步更新時間戳記
 def consume_mp(user_id: int, cost: int):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -219,9 +373,9 @@ def consume_mp(user_id: int, cost: int):
         cursor.close()
         conn.close()
 
-# 📦 寶箱抽獎專用裝備資料庫（已移除材料與消耗，並平衡 bonus 數值）
+# 📦 裝備庫與寶箱系統
 EQUIPMENT_DATABASE = {
-    # ---------------- ⚪ 普通裝備系列 (Normal) ----------------
+    # ⚪ 普通裝備系列
     "【普通】高震動短刀": {"type": "weapon", "bonus": 8},
     "【普通】光束劍": {"type": "weapon", "bonus": 10},
     "【普通】電擊打擊槍": {"type": "weapon", "bonus": 12},
@@ -231,7 +385,7 @@ EQUIPMENT_DATABASE = {
     "【普通】合金重盾": {"type": "armor", "bonus": 10},
     "【普通】外骨骼裝甲": {"type": "armor", "bonus": 12},
 
-    # ---------------- 🔵 精良裝備系列 (Rare) ----------------
+    # 🔵 精良裝備系列
     "【精良】高震動短刀": {"type": "weapon", "bonus": 18},
     "【精良】光束劍": {"type": "weapon", "bonus": 21},
     "【精良】電擊打擊槍": {"type": "weapon", "bonus": 24},
@@ -241,7 +395,7 @@ EQUIPMENT_DATABASE = {
     "【精良】合金重盾": {"type": "armor", "bonus": 19},
     "【精良】外骨骼裝甲": {"type": "armor", "bonus": 22},
 
-    # ---------------- 🟣 史詩裝備系列 (Epic) ----------------
+    # 🟣 史詩裝備系列
     "【史詩】高震動短刀": {"type": "weapon", "bonus": 35},
     "【史詩】光束劍": {"type": "weapon", "bonus": 38},
     "【史詩】電磁打擊槍": {"type": "weapon", "bonus": 42},
@@ -251,7 +405,7 @@ EQUIPMENT_DATABASE = {
     "【史詩】合金重盾": {"type": "armor", "bonus": 34},
     "【史詩】外骨骼裝甲": {"type": "armor", "bonus": 38},
 
-    # ---------------- 🟡 傳說級裝備系列 (Legendary) ----------------
+    # 🟡 傳說級裝備系列
     "【傳說級】終焉短刀": {"type": "weapon", "bonus": 60},
     "【傳說級】終焉光束劍": {"type": "weapon", "bonus": 65},
     "【傳說級】毀滅電磁槍": {"type": "weapon", "bonus": 70},
@@ -262,73 +416,48 @@ EQUIPMENT_DATABASE = {
     "【傳說級】泰坦合金重裝": {"type": "armor", "bonus": 60}
 }
 
-# 🎁 開啟神秘寶箱邏輯（已適配最新裝備庫名稱）
 def open_chest_in_db(user_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        # 1. 檢查玩家背包是否有「神秘寶箱」
         cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = '神秘寶箱'", (user_id,))
         item = cursor.fetchone()
 
         if not item or item[0] <= 0:
             return False, "你的背包裡沒有 **神秘寶箱**！", None, None, None, None
 
-        # 2. 扣除或刪除一個寶箱
         if item[0] > 1:
             cursor.execute("UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_name = '神秘寶箱'", (user_id,))
         else:
             cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = '神秘寶箱'", (user_id,))
 
-        # 3. 隨機決定品質
         quality_roll = random.random()
         if quality_roll < 0.60:
-            prefix = "普通"
-            quality = "⚪ 普通"
+            prefix, quality = "普通", "⚪ 普通"
         elif quality_roll < 0.85:
-            prefix = "精良"
-            quality = "🔵 精良"
+            prefix, quality = "精良", "🔵 精良"
         elif quality_roll < 0.97:
-            prefix = "史詩"
-            quality = "🟣 史詩"
+            prefix, quality = "史詩", "🟣 史詩"
         else:
-            prefix = "傳說級"
-            quality = "🟡 傳說級"
+            prefix, quality = "傳說級", "🟡 傳說級"
 
-        # 4. 隨機決定是武器還是防具，並對應新資料庫命名
         is_weapon = random.choice([True, False])
 
         if is_weapon:
             item_type = "weapon"
-            if prefix == "傳說級":
-                weapon_bases = ["終焉短刀", "終焉光束劍", "毀滅電磁槍", "毀滅重型巨斧"]
-            else:
-                weapon_bases = ["高震動短刀", "光束劍", "電擊打擊槍", "重型巨斧"]
-            
+            weapon_bases = ["終焉短刀", "終焉光束劍", "毀滅電磁槍", "毀滅重型巨斧"] if prefix == "傳說級" else ["高震動短刀", "光束劍", "電擊打擊槍", "重型巨斧"]
             chosen_base = random.choice(weapon_bases)
-            
-            # 名稱對應修正（史詩的電磁打擊槍）
             if prefix == "史詩" and chosen_base == "電擊打擊槍":
                 chosen_base = "電磁打擊槍"
-                
             item_name = f"【{prefix}】{chosen_base}"
         else:
             item_type = "armor"
-            if prefix == "傳說級":
-                armor_bases = ["泰坦戰術護甲", "脈衝防衛力場", "絕對防禦重盾", "泰坦合金重裝"]
-            else:
-                armor_bases = ["戰術護甲", "納米防護服", "合金重盾", "外骨骼裝甲"]
-                
+            armor_bases = ["泰坦戰術護甲", "脈衝防衛力場", "絕對防禦重盾", "泰坦合金重裝"] if prefix == "傳說級" else ["戰術護甲", "納米防護服", "合金重盾", "外骨骼裝甲"]
             chosen_base = random.choice(armor_bases)
             item_name = f"【{prefix}】{chosen_base}"
 
-        # 5. 從 EQUIPMENT_DATABASE 查表取得 bonus 數值
-        if item_name in EQUIPMENT_DATABASE:
-            bonus = EQUIPMENT_DATABASE[item_name]["bonus"]
-        else:
-            bonus = 10  # 防呆保底
+        bonus = EQUIPMENT_DATABASE.get(item_name, {}).get("bonus", 10)
 
-        # 6. 將開出來的裝備放入背包
         cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
         existing = cursor.fetchone()
         if existing:
@@ -346,27 +475,23 @@ def open_chest_in_db(user_id: int):
         cursor.close()
         conn.close()
 
-# 🛡️ 穿戴裝備邏輯
 def equip_item_in_db(user_id: int, item_name: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        # 1. 檢查背包是否有此裝備
         cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
         item = cursor.fetchone()
         if not item or item[0] <= 0:
             return False, "❌ 你的背包裡沒有這個道具！"
 
-        # 2. 判斷是武器還是防具，並計算數值
-        # 依據名稱中的品質給予固定加成：普通(+8/+5)、精良(+15/+10)、史詩(+25/+18)、傳說級(+40/+30)
-        if "光束劍" in item_name or "高振動短刀" in item_name or "電擊打擊槍" in item_name or "重型巨斧" in item_name:
+        if "光束劍" in item_name or "高振動短刀" in item_name or "高震動短刀" in item_name or "電擊打擊槍" in item_name or "電磁打擊槍" in item_name or "重型巨斧" in item_name or "終焉" in item_name or "毀滅" in item_name:
             is_weapon = True
             if "普通" in item_name: atk_bonus = 8
             elif "精良" in item_name: atk_bonus = 15
             elif "史詩" in item_name: atk_bonus = 25
             elif "傳說級" in item_name: atk_bonus = 40
             else: atk_bonus = 5
-        elif "戰術護甲" in item_name or "納米防護服" in item_name or "合金重盾" in item_name or "外骨骼裝甲" in item_name:
+        elif "戰術護甲" in item_name or "納米防護服" in item_name or "合金重盾" in item_name or "外骨骼裝甲" in item_name or "泰坦" in item_name or "脈衝" in item_name or "絕對防禦" in item_name:
             is_weapon = False
             if "普通" in item_name: def_bonus = 5
             elif "精良" in item_name: def_bonus = 10
@@ -376,19 +501,16 @@ def equip_item_in_db(user_id: int, item_name: str):
         else:
             return False, "❌ 這個道具不是裝備，無法穿戴！"
 
-        # 3. 處理裝備對調（若原本有裝備，需放回背包或直接覆蓋。這裡設計為：解除舊裝備回背包，裝上新裝備）
         cursor.execute("SELECT weapon_name, armor_name FROM players WHERE user_id = ?", (user_id,))
         player_gear = cursor.fetchone()
         old_weapon, old_armor = player_gear[0], player_gear[1]
 
-        # 扣除背包中要穿戴的新裝備 1 個
         if item[0] > 1:
             cursor.execute("UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_name = ?", (user_id, item_name))
         else:
             cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
 
         if is_weapon:
-            # 如果原本有裝備武器，放回背包
             if old_weapon and old_weapon != '無':
                 cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, old_weapon))
                 if cursor.fetchone():
@@ -396,12 +518,10 @@ def equip_item_in_db(user_id: int, item_name: str):
                 else:
                     cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, old_weapon))
             
-            # 更新玩家武器
             cursor.execute("UPDATE players SET weapon_name = ?, weapon_atk = ? WHERE user_id = ?", (item_name, atk_bonus, user_id))
             conn.commit()
             return True, f"⚔️ 成功裝備武器：**{item_name}**（攻擊力 `+{atk_bonus}`）！"
         else:
-            # 如果原本有裝備防具，放回背包
             if old_armor and old_armor != '無':
                 cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, old_armor))
                 if cursor.fetchone():
@@ -409,7 +529,6 @@ def equip_item_in_db(user_id: int, item_name: str):
                 else:
                     cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, old_armor))
 
-            # 更新玩家防具
             cursor.execute("UPDATE players SET armor_name = ?, armor_def = ? WHERE user_id = ?", (item_name, def_bonus, user_id))
             conn.commit()
             return True, f"🛡️ 成功裝備防具：**{item_name}**（防禦力 `+{def_bonus}`）！"
@@ -417,7 +536,6 @@ def equip_item_in_db(user_id: int, item_name: str):
         cursor.close()
         conn.close()
 
-# 🧪 道具使用邏輯
 def use_item_in_db(user_id: int, item_name: str):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -497,283 +615,49 @@ def take_damage(user_id: int, damage: int):
         cursor.close()
         conn.close()
 
-def reset_player_data(user_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("DELETE FROM players WHERE user_id = ?", (user_id,))
-        cursor.execute("DELETE FROM inventory WHERE user_id = ?", (user_id,))
-        conn.commit()
-    finally:
-        cursor.close()
-        conn.close()
-
-# 🛠️ 完整的裝備合成配方字典
-# 定義合成配方表 { 合成結果道具: {"cost_gold": 費用, "materials": {材料名稱: 數量}} }
+# 🛠️ 裝備合成配方
 CRAFT_RECIPES = {
-    # ---------------- ⚪ 普通裝備系列 (入門期) ----------------
-    "【普通】高震動短刀": {
-        "cost_gold": 30,
-        "materials": {"鐵劍碎片": 3, "鐵礦石": 2},
-        "type": "weapon",
-        "bonus": 6,
-        "desc": "消耗 3 個鐵劍碎片、2 個鐵礦石與 30 G 合成的普通武器。"
-    },
-    "【普通】光束劍": {
-        "cost_gold": 50,
-        "materials": {"鐵劍碎片": 5, "鐵礦石": 3},
-        "type": "weapon",
-        "bonus": 8,
-        "desc": "消耗 5 個鐵劍碎片、3 個鐵礦石與 50 G 合成的普通武器。"
-    },
-    "【普通】電擊打擊槍": {
-        "cost_gold": 60,
-        "materials": {"鐵劍碎片": 6, "鐵礦石": 4},
-        "type": "weapon",
-        "bonus": 9,
-        "desc": "消耗 6 個鐵劍碎片、4 個鐵礦石與 60 G 合成的普通武器。"
-    },
-    "【普通】重型巨斧": {
-        "cost_gold": 70,
-        "materials": {"鐵劍碎片": 8, "鐵礦石": 5},
-        "type": "weapon",
-        "bonus": 11,
-        "desc": "消耗 8 個鐵劍碎片、5 個鐵礦石與 70 G 合成的普通武器。"
-    },
-    "【普通】戰術護甲": {
-        "cost_gold": 40,
-        "materials": {"鐵礦石": 3},
-        "type": "armor",
-        "bonus": 5,
-        "desc": "消耗 3 個鐵礦石與 40 G 合成的普通防具。"
-    },
-    "【普通】納米防護服": {
-        "cost_gold": 45,
-        "materials": {"鐵礦石": 4, "生命藥水": 1},
-        "type": "armor",
-        "bonus": 6,
-        "desc": "消耗 4 個鐵礦石、1 瓶生命藥水與 45 G 合成的防具。"
-    },
-    "【普通】合金重盾": {
-        "cost_gold": 55,
-        "materials": {"鐵礦石": 6},
-        "type": "armor",
-        "bonus": 8,
-        "desc": "消耗 6 個鐵礦石與 55 G 合成的普通防具。"
-    },
-    "【普通】外骨骼裝甲": {
-        "cost_gold": 70,
-        "materials": {"鐵礦石": 8},
-        "type": "armor",
-        "bonus": 10,
-        "desc": "消耗 8 個鐵礦石與 70 G 合成的普通防具。"
-    },
+    "【普通】高震動短刀": {"cost_gold": 30, "materials": {"鐵劍碎片": 3, "鐵礦石": 2}, "type": "weapon", "bonus": 6, "desc": "消耗 3 個鐵劍碎片、2 個鐵礦石與 30 G 合成的普通武器。"},
+    "【普通】光束劍": {"cost_gold": 50, "materials": {"鐵劍碎片": 5, "鐵礦石": 3}, "type": "weapon", "bonus": 8, "desc": "消耗 5 個鐵劍碎片、3 個鐵礦石與 50 G 合成的普通武器。"},
+    "【普通】電擊打擊槍": {"cost_gold": 60, "materials": {"鐵劍碎片": 6, "鐵礦石": 4}, "type": "weapon", "bonus": 9, "desc": "消耗 6 個鐵劍碎片、4 個鐵礦石與 60 G 合成的普通武器。"},
+    "【普通】重型巨斧": {"cost_gold": 70, "materials": {"鐵劍碎片": 8, "鐵礦石": 5}, "type": "weapon", "bonus": 11, "desc": "消耗 8 個鐵劍碎片、5 個鐵礦石與 70 G 合成的普通武器。"},
+    "【普通】戰術護甲": {"cost_gold": 40, "materials": {"鐵礦石": 3}, "type": "armor", "bonus": 5, "desc": "消耗 3 個鐵礦石與 40 G 合成的普通防具。"},
+    "【普通】納米防護服": {"cost_gold": 45, "materials": {"鐵礦石": 4, "生命藥水": 1}, "type": "armor", "bonus": 6, "desc": "消耗 4 個鐵礦石、1 瓶生命藥水與 45 G 合成的防具。"},
+    "【普通】合金重盾": {"cost_gold": 55, "materials": {"鐵礦石": 6}, "type": "armor", "bonus": 8, "desc": "消耗 6 個鐵礦石與 55 G 合成的普通防具。"},
+    "【普通】外骨骼裝甲": {"cost_gold": 70, "materials": {"鐵礦石": 8}, "type": "armor", "bonus": 10, "desc": "消耗 8 個鐵礦石與 70 G 合成的普通防具。"},
 
-    # ---------------- 🔵 精良裝備系列 (消耗：普通裝備 + 更多鐵料 + 低階能量晶核) ----------------
-    "【精良】高震動短刀": {
-        "cost_gold": 100,
-        "materials": {"【普通】高震動短刀": 1, "鐵劍碎片": 12, "鐵礦石": 8, "低階能量晶核": 1},
-        "type": "weapon",
-        "bonus": 12,
-        "desc": "消耗普通短刀、大量鐵料與低階能量晶核升級的精良武器。"
-    },
-    "【精良】光束劍": {
-        "cost_gold": 120,
-        "materials": {"【普通】光束劍": 1, "鐵劍碎片": 15, "鐵礦石": 10, "低階能量晶核": 1},
-        "type": "weapon",
-        "bonus": 15,
-        "desc": "消耗普通光束劍、大量鐵料與低階能量晶核升級的精良武器。"
-    },
-    "【精良】電擊打擊槍": {
-        "cost_gold": 140,
-        "materials": {"【普通】電擊打擊槍": 1, "鐵劍碎片": 18, "鐵礦石": 12, "低階能量晶核": 1},
-        "type": "weapon",
-        "bonus": 17,
-        "desc": "結合鐵料與低階能量晶核強化的精良打擊槍。"
-    },
-    "【精良】重型巨斧": {
-        "cost_gold": 160,
-        "materials": {"【普通】重型巨斧": 1, "鐵劍碎片": 22, "鐵礦石": 15, "低階能量晶核": 1},
-        "type": "weapon",
-        "bonus": 20,
-        "desc": "注入低階能量晶核與重度鐵料的精良重型巨斧。"
-    },
-    "【精良】戰術護甲": {
-        "cost_gold": 90,
-        "materials": {"【普通】戰術護甲": 1, "鐵礦石": 10, "低階能量晶核": 1},
-        "type": "armor",
-        "bonus": 10,
-        "desc": "使用大量鐵礦石與低階能量晶核升級的精良戰術護甲。"
-    },
-    "【精良】納米防護服": {
-        "cost_gold": 100,
-        "materials": {"【普通】納米防護服": 1, "鐵礦石": 12, "低階能量晶核": 1},
-        "type": "armor",
-        "bonus": 12,
-        "desc": "防禦力提升的精良納米防護服。"
-    },
-    "【精良】合金重盾": {
-        "cost_gold": 120,
-        "materials": {"【普通】合金重盾": 1, "鐵礦石": 15, "低階能量晶核": 1},
-        "type": "armor",
-        "bonus": 14,
-        "desc": "強化結構的精良合金重盾。"
-    },
-    "【精良】外骨骼裝甲": {
-        "cost_gold": 150,
-        "materials": {"【普通】外骨骼裝甲": 1, "鐵礦石": 18, "低階能量晶核": 1},
-        "type": "armor",
-        "bonus": 16,
-        "desc": "重型強化的精良外骨骼裝甲。"
-    },
+    "【精良】高震動短刀": {"cost_gold": 100, "materials": {"【普通】高震動短刀": 1, "鐵劍碎片": 12, "鐵礦石": 8, "低階能量晶核": 1}, "type": "weapon", "bonus": 12, "desc": "消耗普通短刀、大量鐵料與低階能量晶核升級的精良武器。"},
+    "【精良】光束劍": {"cost_gold": 120, "materials": {"【普通】光束劍": 1, "鐵劍碎片": 15, "鐵礦石": 10, "低階能量晶核": 1}, "type": "weapon", "bonus": 15, "desc": "消耗普通光束劍、大量鐵料與低階能量晶核升級的精良武器。"},
+    "【精良】電擊打擊槍": {"cost_gold": 140, "materials": {"【普通】電擊打擊槍": 1, "鐵劍碎片": 18, "鐵礦石": 12, "低階能量晶核": 1}, "type": "weapon", "bonus": 17, "desc": "結合鐵料與低階能量晶核強化的精良打擊槍。"},
+    "【精良】重型巨斧": {"cost_gold": 160, "materials": {"【普通】重型巨斧": 1, "鐵劍碎片": 22, "鐵礦石": 15, "低階能量晶核": 1}, "type": "weapon", "bonus": 20, "desc": "注入低階能量晶核與重度鐵料的精良重型巨斧。"},
+    "【精良】戰術護甲": {"cost_gold": 90, "materials": {"【普通】戰術護甲": 1, "鐵礦石": 10, "低階能量晶核": 1}, "type": "armor", "bonus": 10, "desc": "使用大量鐵礦石與低階能量晶核升級的精良戰術護甲。"},
+    "【精良】納米防護服": {"cost_gold": 100, "materials": {"【普通】納米防護服": 1, "鐵礦石": 12, "低階能量晶核": 1}, "type": "armor", "bonus": 12, "desc": "防禦力提升的精良納米防護服。"},
+    "【精良】合金重盾": {"cost_gold": 120, "materials": {"【普通】合金重盾": 1, "鐵礦石": 15, "低階能量晶核": 1}, "type": "armor", "bonus": 14, "desc": "強化結構的精良合金重盾。"},
+    "【精良】外骨骼裝甲": {"cost_gold": 150, "materials": {"【普通】外骨骼裝甲": 1, "鐵礦石": 18, "低階能量晶核": 1}, "type": "armor", "bonus": 16, "desc": "重型強化的精良外骨骼裝甲。"},
 
-    # ---------------- 🟣 史詩裝備系列 (消耗：精良裝備 + 海量鐵料 + 中階能量晶核) ----------------
-    "【史詩】高震動短刀": {
-        "cost_gold": 350,
-        "materials": {"【精良】高震動短刀": 1, "鐵劍碎片": 30, "鐵礦石": 20, "中階能量晶核": 1},
-        "type": "weapon",
-        "bonus": 22,
-        "desc": "消耗精良短刀、海量鐵料與中階能量晶核的史詩短刀。"
-    },
-    "【史詩】光束劍": {
-        "cost_gold": 380,
-        "materials": {"【精良】光束劍": 1, "鐵劍碎片": 35, "鐵礦石": 24, "中階能量晶核": 1},
-        "type": "weapon",
-        "bonus": 26,
-        "desc": "高能聚焦且消耗大量鐵料的史詩級光束劍。"
-    },
-    "【史詩】電磁打擊槍": {
-        "cost_gold": 400,
-        "materials": {"【精良】電擊打擊槍": 1, "鐵劍碎片": 40, "鐵礦石": 28, "中階能量晶核": 1},
-        "type": "weapon",
-        "bonus": 29,
-        "desc": "注入中階能量核心與重裝鐵料的史詩遠程武器。"
-    },
-    "【史詩】重型巨斧": {
-        "cost_gold": 450,
-        "materials": {"【精良】重型巨斧": 1, "鐵劍碎片": 48, "鐵礦石": 32, "中階能量晶核": 1},
-        "type": "weapon",
-        "bonus": 34,
-        "desc": "沉重且附帶中階能量震盪與海量鐵料的史詩巨斧。"
-    },
-    "【史詩】戰術護甲": {
-        "cost_gold": 300,
-        "materials": {"【精良】戰術護甲": 1, "鐵礦石": 25, "中階能量晶核": 1},
-        "type": "armor",
-        "bonus": 18,
-        "desc": "具備中階能量防禦場與重裝鐵礦的史詩護甲。"
-    },
-    "【史詩】納米防護服": {
-        "cost_gold": 330,
-        "materials": {"【精良】納米防護服": 1, "鐵礦石": 28, "中階能量晶核": 1},
-        "type": "armor",
-        "bonus": 20,
-        "desc": "微型奈米防禦升級的史詩防護服。"
-    },
-    "【史詩】合金重盾": {
-        "cost_gold": 370,
-        "materials": {"【精良】合金重盾": 1, "鐵礦石": 32, "中階能量晶核": 1},
-        "type": "armor",
-        "bonus": 24,
-        "desc": "中階能量屏障加固的史詩重盾。"
-    },
-    "【史詩】外骨骼裝甲": {
-        "cost_gold": 420,
-        "materials": {"【精良】外骨骼裝甲": 1, "鐵礦石": 36, "中階能量晶核": 1},
-        "type": "armor",
-        "bonus": 28,
-        "desc": "全覆蓋中階動力的史詩外骨骼。"
-    },
+    "【史詩】高震動短刀": {"cost_gold": 350, "materials": {"【精良】高震動短刀": 1, "鐵劍碎片": 30, "鐵礦石": 20, "中階能量晶核": 1}, "type": "weapon", "bonus": 22, "desc": "消耗精良短刀、海量鐵料與中階能量晶核的史詩短刀。"},
+    "【史詩】光束劍": {"cost_gold": 380, "materials": {"【精良】光束劍": 1, "鐵劍碎片": 35, "鐵礦石": 24, "中階能量晶核": 1}, "type": "weapon", "bonus": 26, "desc": "高能聚焦且消耗大量鐵料的史詩級光束劍。"},
+    "【史詩】電磁打擊槍": {"cost_gold": 400, "materials": {"【精良】電擊打擊槍": 1, "鐵劍碎片": 40, "鐵礦石": 28, "中階能量晶核": 1}, "type": "weapon", "bonus": 29, "desc": "注入中階能量核心與重裝鐵料的史詩遠程武器。"},
+    "【史詩】重型巨斧": {"cost_gold": 450, "materials": {"【精良】重型巨斧": 1, "鐵劍碎片": 48, "鐵礦石": 32, "中階能量晶核": 1}, "type": "weapon", "bonus": 34, "desc": "沉重且附帶中階能量震盪與海量鐵料的史詩巨斧。"},
+    "【史詩】戰術護甲": {"cost_gold": 300, "materials": {"【精良】戰術護甲": 1, "鐵礦石": 25, "中階能量晶核": 1}, "type": "armor", "bonus": 18, "desc": "具備中階能量防禦場與重裝鐵礦的史詩護甲。"},
+    "【史詩】納米防護服": {"cost_gold": 330, "materials": {"【精良】納米防護服": 1, "鐵礦石": 28, "中階能量晶核": 1}, "type": "armor", "bonus": 20, "desc": "微型奈米防禦升級的史詩防護服。"},
+    "【史詩】合金重盾": {"cost_gold": 370, "materials": {"【精良】合金重盾": 1, "鐵礦石": 32, "中階能量晶核": 1}, "type": "armor", "bonus": 24, "desc": "中階能量屏障加固的史詩重盾。"},
+    "【史詩】外骨骼裝甲": {"cost_gold": 420, "materials": {"【精良】外骨骼裝甲": 1, "鐵礦石": 36, "中階能量晶核": 1}, "type": "armor", "bonus": 28, "desc": "全覆蓋中階動力的史詩外骨骼。"},
 
-    # ---------------- 🟡 傳說級裝備系列 (消耗：史詩裝備 + 極量鐵料 + 高階能量晶核) ----------------
-    "【傳說級】終焉短刀": {
-        "cost_gold": 1000,
-        "materials": {"【史詩】高震動短刀": 1, "鐵劍碎片": 70, "鐵塊": 4, "高階能量晶核": 4, "魔導金屬": 1},
-        "type": "weapon",
-        "bonus": 40,
-        "desc": "消耗史詩短刀、極量鐵料與高階能量晶核的傳說短刀。"
-    },
-    "【傳說級】終焉光束劍": {
-        "cost_gold": 1100,
-        "materials": {"【史詩】光束劍": 1, "鐵劍碎片": 80, "鐵塊": 5, "高階能量晶核": 5, "魔導金屬": 2},
-        "type": "weapon",
-        "bonus": 42,
-        "desc": "切割一切的傳說級終焉光束劍。"
-    },
-    "【傳說級】毀滅電磁槍": {
-        "cost_gold": 1200,
-        "materials": {"【史詩】電磁打擊槍": 1, "鐵劍碎片": 90, "鐵塊": 6, "高階能量晶核": 6, "魔導金屬": 3},
-        "type": "weapon",
-        "bonus": 45,
-        "desc": "貫穿戰場的傳說級電磁神兵。"
-    },
-    "【傳說級】毀滅重型巨斧": {
-        "cost_gold": 1300,
-        "materials": {"【史詩】重型巨斧": 1, "鐵劍碎片": 100, "鐵塊": 7, "高階能量晶核": 7, "魔導金屬": 4},
-        "type": "weapon",
-        "bonus": 50,
-        "desc": "擁有神話級破壞力的傳說巨斧。"
-    },
-    "【傳說級】泰坦戰術護甲": {
-        "cost_gold": 900,
-        "materials": {"【史詩】戰術護甲": 1, "鐵塊": 5, "高階能量晶核": 1, "魔導金屬": 1},
-        "type": "armor",
-        "bonus": 30,
-        "desc": "泰坦級防禦力的傳說戰術護甲。"
-    },
-    "【傳說級】脈衝防衛力場": {
-        "cost_gold": 1000,
-        "materials": {"【史詩】納米防護服": 1, "鐵塊": 6, "高階能量晶核": 2, "魔導金屬": 2},
-        "type": "armor",
-        "bonus": 33,
-        "desc": "展開自動脈衝防禦的傳說力場服。"
-    },
-    "【傳說級】絕對防禦重盾": {
-        "cost_gold": 1100,
-        "materials": {"【史詩】合金重盾": 1, "鐵塊": 7, "高階能量晶核": 3, "魔導金屬": 3},
-        "type": "armor",
-        "bonus": 37,
-        "desc": "號稱永不破裂的傳說重盾。"
-    },
-    "【傳說級】泰坦合金重裝": {
-        "cost_gold": 1300,
-        "materials": {"【史詩】外骨骼裝甲": 1, "鐵塊": 8, "高階能量晶核": 4, "魔導金屬": 4},
-        "type": "armor",
-        "bonus": 42,
-        "desc": "終極防禦型態的傳說級泰坦重裝。"
-    },
+    "【傳說級】終焉短刀": {"cost_gold": 1000, "materials": {"【史詩】高震動短刀": 1, "鐵劍碎片": 70, "鐵塊": 4, "高階能量晶核": 4, "魔導金屬": 1}, "type": "weapon", "bonus": 40, "desc": "消耗史詩短刀、極量鐵料與高階能量晶核的傳說短刀。"},
+    "【傳說級】終焉光束劍": {"cost_gold": 1100, "materials": {"【史詩】光束劍": 1, "鐵劍碎片": 80, "鐵塊": 5, "高階能量晶核": 5, "魔導金屬": 2}, "type": "weapon", "bonus": 42, "desc": "切割一切的傳說級終焉光束劍。"},
+    "【傳說級】毀滅電磁槍": {"cost_gold": 1200, "materials": {"【史詩】電磁打擊槍": 1, "鐵劍碎片": 90, "鐵塊": 6, "高階能量晶核": 6, "魔導金屬": 3}, "type": "weapon", "bonus": 45, "desc": "貫穿戰場的傳說級電磁神兵。"},
+    "【傳說級】毀滅重型巨斧": {"cost_gold": 1300, "materials": {"【史詩】重型巨斧": 1, "鐵劍碎片": 100, "鐵塊": 7, "高階能量晶核": 7, "魔導金屬": 4}, "type": "weapon", "bonus": 50, "desc": "擁有神話級破壞力的傳說巨斧。"},
+    "【傳說級】泰坦戰術護甲": {"cost_gold": 900, "materials": {"【史詩】戰術護甲": 1, "鐵塊": 5, "高階能量晶核": 1, "魔導金屬": 1}, "type": "armor", "bonus": 30, "desc": "泰坦級防禦力的傳說戰術護甲。"},
+    "【傳說級】脈衝防衛力場": {"cost_gold": 1000, "materials": {"【史詩】納米防護服": 1, "鐵塊": 6, "高階能量晶核": 2, "魔導金屬": 2}, "type": "armor", "bonus": 33, "desc": "展開自動脈衝防禦的傳說力場服。"},
+    "【傳說級】絕對防禦重盾": {"cost_gold": 1100, "materials": {"【史詩】合金重盾": 1, "鐵塊": 7, "高階能量晶核": 3, "魔導金屬": 3}, "type": "armor", "bonus": 37, "desc": "號稱永不破裂的傳說重盾。"},
+    "【傳說級】泰坦合金重裝": {"cost_gold": 1300, "materials": {"【史詩】外骨骼裝甲": 1, "鐵塊": 8, "高階能量晶核": 4, "魔導金屬": 4}, "type": "armor", "bonus": 42, "desc": "終極防禦型態的傳說級泰坦重裝。"},
 
-    # ---------------- 📦 消耗品與其他 ----------------
-    "急救包": {
-        "cost_gold": 50,
-        "materials": {"生命藥水": 2},
-        "type": "item",
-        "desc": "消耗 2 瓶生命藥水與 50 G 濃縮合成的高效急救包。"
-    },
-    "中階能量晶核": {
-        "cost_gold": 100,
-        "materials": {"低階能量晶核": 3},
-        "type": "item",
-        "desc": "消耗 3 顆低階能量晶核與 100 G合成的中階能量晶核"
-    },
-    "高階能量晶核": {
-        "cost_gold": 300,
-        "materials": {"中階能量晶核": 3},
-        "type": "item",
-        "desc": "消耗 3 顆中階能量晶核與 300 G合成的高階能量晶核"
-    },
-    "鐵塊": {
-        "cost_gold": 180,
-        "materials": {"鐵礦石": 27},
-        "type": "item",
-        "desc": "消耗 27 個鐵礦石與 180 G合成的鐵塊"
-    },
-    "魔導金屬": {
-        "cost_gold": 980,
-        "materials": {"鐵塊": 15, "高階能量晶核": 10},
-        "type": "item",
-        "desc": "消耗 15 個鐵塊、 10 顆高階能量晶核與 980 G合成的魔導金屬"
-    }
+    "急救包": {"cost_gold": 50, "materials": {"生命藥水": 2}, "type": "item", "desc": "消耗 2 瓶生命藥水與 50 G 濃縮合成的高效急救包。"},
+    "中階能量晶核": {"cost_gold": 100, "materials": {"低階能量晶核": 3}, "type": "item", "desc": "消耗 3 顆低階能量晶核與 100 G合成的中階能量晶核"},
+    "高階能量晶核": {"cost_gold": 300, "materials": {"中階能量晶核": 3}, "type": "item", "desc": "消耗 3 顆中階能量晶核與 300 G合成的高階能量晶核"},
+    "鐵塊": {"cost_gold": 180, "materials": {"鐵礦石": 27}, "type": "item", "desc": "消耗 27 個鐵礦石與 180 G合成的鐵塊"},
+    "魔導金屬": {"cost_gold": 980, "materials": {"鐵塊": 15, "高階能量晶核": 10}, "type": "item", "desc": "消耗 15 個鐵塊、 10 顆高階能量晶核與 980 G合成的魔導金屬"}
 }
 
 def craft_item_in_db(user_id: int, target_item: str):
@@ -787,7 +671,6 @@ def craft_item_in_db(user_id: int, target_item: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        # 1. 檢查玩家金幣是否足夠
         cursor.execute("SELECT gold FROM players WHERE user_id = ?", (user_id,))
         player = cursor.fetchone()
         if not player:
@@ -797,7 +680,6 @@ def craft_item_in_db(user_id: int, target_item: str):
         if player_gold < cost_gold:
             return False, f"❌ 金幣不足！合成需要 `{cost_gold} G`，你目前只有 `{player_gold} G`。"
 
-        # 2. 檢查所有材料數量是否足夠
         for mat_name, req_qty in required_materials.items():
             cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, mat_name))
             inv_row = cursor.fetchone()
@@ -805,10 +687,8 @@ def craft_item_in_db(user_id: int, target_item: str):
             if inv_qty < req_qty:
                 return False, f"❌ 材料不足！缺少 **{mat_name}**（需要 `{req_qty}` 個，當前持有 `{inv_qty}` 個）。"
 
-        # 3. 扣除金幣
         cursor.execute("UPDATE players SET gold = gold - ? WHERE user_id = ?", (cost_gold, user_id))
 
-        # 4. 扣除所有消耗的材料（若數量歸零則直接刪除該筆記錄）
         for mat_name, req_qty in required_materials.items():
             cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, mat_name))
             inv_qty = cursor.fetchone()[0]
@@ -816,9 +696,8 @@ def craft_item_in_db(user_id: int, target_item: str):
             if new_qty > 0:
                 cursor.execute("UPDATE inventory SET quantity = ? WHERE user_id = ? AND item_name = ?", (new_qty, user_id, mat_name))
             else:
-                cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, mat_name))
+                cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ?", (new_qty, user_id, mat_name))
 
-        # 5. 將合成好的裝備放入背包
         cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, target_item))
         target_row = cursor.fetchone()
         if target_row:
@@ -828,115 +707,39 @@ def craft_item_in_db(user_id: int, target_item: str):
 
         conn.commit()
         return True, f"🎉 成功合成 **{target_item}**！\n消耗金幣：`{cost_gold} G`\n裝備已自動放入你的背包中。"
-        
     finally:
         cursor.close()
         conn.close()
-
-import sqlite3
-import os
-
-# 鎖死絕對路徑，確保所有模組讀寫的是同一個檔案
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "game.db")
-
-def get_db_connection():
-    return sqlite3.connect(DB_PATH)
-
-def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # 1. 建立基礎 players 表格（包含 level 與 exp）
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS players (
-            user_id INTEGER PRIMARY KEY,
-            role_name TEXT,
-            level INTEGER DEFAULT 1,
-            exp INTEGER DEFAULT 0,
-            hp INTEGER,
-            max_hp INTEGER,
-            mp INTEGER,
-            max_mp INTEGER,
-            stamina INTEGER,
-            max_stamina INTEGER,
-            atk INTEGER,
-            def INTEGER,
-            gold INTEGER DEFAULT 100,
-            weapon_name TEXT,
-            weapon_atk INTEGER DEFAULT 0,
-            armor_name TEXT,
-            armor_def INTEGER DEFAULT 0
-        )
-    """)
-    
-    # 2. 強制檢查並補上可能遺失的欄位（針對已經存在的舊資料庫）
-    try:
-        cursor.execute("ALTER TABLE players ADD COLUMN level INTEGER DEFAULT 1")
-    except Exception:
-        pass  # 如果欄位已經存在，會自動略過錯誤
-        
-    try:
-        cursor.execute("ALTER TABLE players ADD COLUMN exp INTEGER DEFAULT 0")
-    except Exception:
-        pass  # 如果欄位已經存在，會自動略過錯誤
-
-    
-    # 2. 背包資料表
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS inventory (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            item_name TEXT,
-            quantity INTEGER
-        )
-    """)
-
-    # 3. 玩家市場資料表
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS market_listings (
-            listing_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            seller_id INTEGER,
-            item_name TEXT,
-            price INTEGER,
-            quantity INTEGER
-        )
-    """)
-
-    conn.commit()
-    cursor.close()
-    conn.close()
-    print(f"✨ [資料庫重置] 絕對路徑初始化完成: {DB_PATH}")
-
-# 確保每次載入都會執行
-init_db()
 
 # --- 市場查詢與交易函數 ---
 def get_active_sellers(user_id):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT DISTINCT seller_id 
-        FROM market_listings 
-        WHERE seller_id != ? AND quantity > 0
-    """, (user_id,))
-    rows = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return [(row[0], f"特務 #{row[0]}") for row in rows]
+    try:
+        cursor.execute("""
+            SELECT DISTINCT seller_id 
+            FROM market_listings 
+            WHERE seller_id != ? AND quantity > 0
+        """, (user_id,))
+        rows = cursor.fetchall()
+        return [(row[0], f"特務 #{row[0]}") for row in rows]
+    finally:
+        cursor.close()
+        conn.close()
 
 def get_listings_by_seller(seller_id):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT listing_id, item_name, price, quantity 
-        FROM market_listings 
-        WHERE seller_id = ? AND quantity > 0
-    """, (seller_id,))
-    items = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return items
+    try:
+        cursor.execute("""
+            SELECT listing_id, item_name, price, quantity 
+            FROM market_listings 
+            WHERE seller_id = ? AND quantity > 0
+        """, (seller_id,))
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
 
 def buy_market_item(buyer_id, listing_id):
     conn = get_db_connection()
@@ -981,11 +784,9 @@ def buy_market_item(buyer_id, listing_id):
         conn.close()
 
 def list_market_item(user_id, item_name, price, quantity):
-    """將玩家背包的道具上架至市場"""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        # 1. 檢查玩家背包是否有足夠的該道具
         cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
         inv = cursor.fetchone()
         
@@ -995,13 +796,11 @@ def list_market_item(user_id, item_name, price, quantity):
         if price <= 0 or quantity <= 0:
             return False, "❌ 價格與數量必須大於 0！"
 
-        # 2. 扣除或刪除背包中的道具
         if inv[0] == quantity:
             cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
         else:
             cursor.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?", (quantity, user_id, item_name))
 
-        # 3. 寫入市場上架資料表
         cursor.execute("""
             INSERT INTO market_listings (seller_id, item_name, price, quantity)
             VALUES (?, ?, ?, ?)
@@ -1016,13 +815,10 @@ def list_market_item(user_id, item_name, price, quantity):
         cursor.close()
         conn.close()
 
-
-# 📈 增加玩家經驗值與處理升級邏輯
 def gain_player_exp(user_id: int, exp_amount: int):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        # 取得玩家當前等級與經驗值
         cursor.execute("SELECT level, exp FROM players WHERE user_id = ?", (user_id,))
         player = cursor.fetchone()
         if not player:
@@ -1031,17 +827,14 @@ def gain_player_exp(user_id: int, exp_amount: int):
         level, current_exp = player
         current_exp += exp_amount
         
-        # 升級所需經驗值公式（例如：當前等級 * 100）
         next_level_exp = level * 100
         level_up_msg = ""
         
-        # 檢查是否升級（支援連續升級）
         while current_exp >= next_level_exp:
             current_exp -= next_level_exp
             level += 1
             next_level_exp = level * 100
             
-            # 升級時順便提升屬性（可依你的需求調整數值）
             cursor.execute("""
                 UPDATE players 
                 SET level = ?, exp = ?, max_hp = max_hp + 20, hp = max_hp + 20, atk = atk + 3 
@@ -1049,7 +842,6 @@ def gain_player_exp(user_id: int, exp_amount: int):
             """, (level, current_exp, user_id))
             level_up_msg += f"\n🎉 **等級提升！** 恭喜升到 **Lv.{level}**（生命上限與攻擊力提升！）"
         
-        # 若沒有升級，僅更新經驗值
         if not level_up_msg:
             cursor.execute("UPDATE players SET exp = ? WHERE user_id = ?", (current_exp, user_id))
             
@@ -1059,321 +851,54 @@ def gain_player_exp(user_id: int, exp_amount: int):
         cursor.close()
         conn.close()
 
-import sqlite3
-
-def get_db_connection(db_name="game.db"):
-    conn = sqlite3.connect(db_name, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    return conn
-
-# ==================== 🛒 商城道具與定價表 ====================
-SHOP_ITEMS = {
-    "生命藥水": {"price": 30, "type": "consumable", "description": "基礎治療道具，使用後恢復 30 點生命值。"},
-    "急救包": {"price": 60, "type": "consumable", "description": "高效急救醫療包，使用後恢復 50 點生命值。"},
-    "魔力藥水": {"price": 40, "type": "consumable", "description": "補充精神力的藥劑，使用後恢復 20 點 MP。"},
-    "能量飲料": {"price": 75, "type": "consumable", "description": "高科技提神飲料，使用後瞬間恢復 40 點 MP。"},
-    "神秘寶箱": {"price": 200, "type": "special", "description": "內含各品質武器與防具的神秘寶箱。"},
-    
-    # 🌱 農場種子系列
-    "小麥種子": {"price": 10, "type": "seed", "description": "可以種植出小麥的基礎種子。"},
-    "番茄種子": {"price": 15, "type": "seed", "description": "可以種植出新鮮番茄的種子。"},
-    "高麗菜種子": {"price": 15, "type": "seed", "description": "可以種植出清脆高麗菜的種子。"},
-    "胡蘿蔔種子": {"price": 15, "type": "seed", "description": "可以種植出甜美胡蘿蔔的種子。"},
-    "蘋果種子": {"price": 20, "type": "seed", "description": "可以種植出多汁蘋果的種子。"},
-
-    # 🌾 原有材料與其他道具
-    "小麥": {"price": 20, "type": "material", "description": "基礎烘焙與麵食原料。"},
-    "米": {"price": 25, "type": "material", "description": "精製白米（也可在料理台由小麥加工製成）。"},
-    "番茄": {"price": 30, "type": "material", "description": "酸甜多汁的新鮮番茄。"},
-    "高麗菜": {"price": 30, "type": "material", "description": "清脆爽口的蔬菜。"},
-    "胡蘿蔔": {"price": 30, "type": "material", "description": "營養豐富的根莖蔬菜。"},
-    "蘋果": {"price": 35, "type": "material", "description": "香甜多汁的水果。"},
-    "香料": {"price": 40, "type": "material", "description": "去腥提味的關鍵調味料。"},
-    "蔥": {"price": 25, "type": "material", "description": "香氣十足的青蔥。"},
-    "鮮魚": {"price": 50, "type": "material", "description": "新鮮漁獲。"},
-    "生肉": {"price": 45, "type": "material", "description": "多種肉類料理的基礎原料。"},
-    "鐵塊": {"price": 200, "type": "upgrade", "description": "料理台升級至 Lv.2 的必要素材。"},
-    "魔導金屬": {"price": 1000, "type": "upgrade", "description": "料理台升級至 Lv.3 的必要素材。"},
-    "乳牛": {"price": 300, "type": "animal", "description": "產出「牛奶」。"},
-    "肉牛": {"price": 400, "type": "animal", "description": "產出「高級肉塊」。"},
-    "豬": {"price": 250, "type": "animal", "description": "產出「五花肉」。"},
-    "雞": {"price": 150, "type": "animal", "description": "產出「雞蛋」。"},
-    # 🎣 釣竿工具系列
-    "木製釣竿": {"price": 100, "type": "tool", "description": "基礎釣竿，解鎖「家園小溪」釣魚。"},
-    "強化金屬釣竿": {"price": 500, "type": "tool", "description": "堅固的釣竿，解鎖「神秘湖泊」釣魚。"},
-    "魔導釣竿": {"price": 2000, "type": "tool", "description": "帶有魔力的釣竿，解鎖「深海遺跡」釣魚。"},
-
-    # 🐟 漁獲與水產
-    "小蝦": {"price": 15, "type": "material", "description": "小小的海鮮配料。"},
-    "鮭魚": {"price": 60, "type": "material", "description": "高品質深海鮭魚。"},
-    "鰻魚": {"price": 80, "type": "material", "description": "肥美的鰻魚。"},
-    "鮪魚": {"price": 120, "type": "material", "description": "高級鮪魚肉塊。"},
-    "河豚": {"price": 150, "type": "material", "description": "處理需要極高技術的珍貴食材。"},
-    # 🐾 寵物與飼料系列商品（可加入 SHOP_ITEMS）
-    "寵物飼料": {"price": 20, "type": "consumable", "description": "營養滿分的寵物飼料，用來餵食心愛的寵物。"},
-    "小狗": {"price": 500, "type": "pet", "description": "忠誠的夥伴，解鎖後陪伴你左右。"},
-    "小貓": {"price": 500, "type": "pet", "description": "靈巧的貓咪，帶有神祕的招財體質。"},
-    "兔兔": {"price": 400, "type": "pet", "description": "溫馴可愛的兔子，療癒你的冒險心情。"}
-}
-
-shop_prices = {name: data["price"] for name, data in SHOP_ITEMS.items()}
-
-
-# ==================== 🍳 料理食譜與升級資料庫 ====================
-RECIPE_DATABASE = {
-    # 🌾 小麥加工區（在料理台將小麥做成米）
-    "米": {"station_level": 1, "ingredients": {"小麥": 2}, "output": "米", "description": "在料理台將 2 個小麥加工研磨成 1 個米。"},
-
-    # 🍳 料理區 (Lv.1)
-    "義大利麵": {"station_level": 1, "ingredients": {"小麥": 2, "生肉": 1, "番茄": 1}, "output": "【料理】義大利麵", "description": "恢復 40 點生命與 20 點魔力。"},
-    "麵包": {"station_level": 1, "ingredients": {"小麥": 3}, "output": "【料理】麵包", "description": "恢復 25 點生命。"},
-    "香煎魚": {"station_level": 1, "ingredients": {"鮮魚": 1, "香料": 1}, "output": "【料理】香煎魚", "description": "恢復 35 點生命。"},
-    "壽司": {"station_level": 1, "ingredients": {"米": 2, "鮮魚": 1}, "output": "【料理】壽司", "description": "恢復 30 點生命與 15 點魔力。"},
-    "什錦飯": {"station_level": 1, "ingredients": {"米": 2, "生肉": 1, "高麗菜": 2}, "output": "【料理】什錦飯", "description": "恢復 50 點生命。"},
-    "熱狗麵包": {"station_level": 1, "ingredients": {"小麥": 2, "生肉": 1}, "output": "【料理】熱狗麵包", "description": "恢復 30 點生命。"},
-    "紅燒肉": {"station_level": 1, "ingredients": {"五花肉": 2, "香料": 1}, "output": "【料理】紅燒肉", "description": "恢復 60 點生命。"},
-    "包子": {"station_level": 1, "ingredients": {"小麥": 2, "生肉": 1}, "output": "【料理】包子", "description": "恢復 35 點生命。"},
-    "麵疙瘩": {"station_level": 1, "ingredients": {"小麥": 3, "番茄": 1}, "output": "【料理】麵疙瘩", "description": "恢復 30 點生命。"},
-    "蔥油餅": {"station_level": 1, "ingredients": {"小麥": 3, "蔥": 2}, "output": "【料理】蔥油餅", "description": "恢復 30 點生命。"},
-    "咖哩飯": {"station_level": 1, "ingredients": {"米": 2, "胡蘿蔔": 2, "生肉": 1}, "output": "【料理】咖哩飯", "description": "恢復 55 點生命與 20 點魔力。"},
-
-    # 🍳 料理區 (Lv.2)
-    "千層蛋糕": {"station_level": 2, "ingredients": {"小麥": 3, "雞蛋": 2, "牛奶": 2}, "output": "【料理】千層蛋糕", "description": "恢復 60 點魔力。"},
-    "香檳氣泡水": {"station_level": 2, "ingredients": {"蘋果": 3}, "output": "【料理】香檳氣泡水", "description": "恢復 40 點魔力。"},
-    "泡芙": {"station_level": 2, "ingredients": {"小麥": 2, "雞蛋": 2, "牛奶": 1}, "output": "【料理】泡芙", "description": "恢復 45 點魔力。"},
-    "燉飯": {"station_level": 2, "ingredients": {"米": 3, "生肉": 1, "高麗菜": 2}, "output": "【料理】燉飯", "description": "恢復 70 點生命。"},
-    "舒芙蕾": {"station_level": 2, "ingredients": {"雞蛋": 3, "牛奶": 2}, "output": "【料理】舒芙蕾", "description": "恢復 50 點魔力。"},
-    "披薩": {"station_level": 2, "ingredients": {"小麥": 3, "生肉": 2, "番茄": 1}, "output": "【料理】披薩", "description": "恢復 80 點生命。"},
-    "白醬意麵": {"station_level": 2, "ingredients": {"小麥": 2, "牛奶": 2, "生肉": 1}, "output": "【料理】白醬意麵", "description": "恢復 65 點生命與 30 點魔力。"},
-    "東坡肉": {"station_level": 2, "ingredients": {"五花肉": 3, "香料": 2}, "output": "【料理】東坡肉", "description": "恢復 90 點生命。"},
-
-    # 🍳 料理區 (Lv.3)
-    "紅酒燉牛肉": {"station_level": 3, "ingredients": {"高級肉塊": 2, "胡蘿蔔": 2, "番茄": 1, "香料": 1}, "output": "【料理】紅酒燉牛肉", "description": "恢復 120 點生命與 50 點魔力！"},
-    "牛肉麵": {"station_level": 3, "ingredients": {"小麥": 2, "高級肉塊": 2, "蔥": 1}, "output": "【料理】牛肉麵", "description": "恢復 100 點生命與 40 點魔力。"}
-}
-
-COOKING_STATION_UPGRADE_COST = {
-    2: {"gold": 1000, "item": "鐵塊", "qty": 5},
-    3: {"gold": 5000, "item": "魔導金屬", "qty": 3}
-}
-
-
-# ==================== 🛠️ 資料庫初始化與欄位防護 ====================
-def init_db(db_name="game.db"):
-    conn = get_db_connection(db_name)
-    cursor = conn.cursor()
-
-    # 1. 玩家主表
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS players (
-            user_id INTEGER PRIMARY KEY,
-            role_name TEXT,
-            level INTEGER DEFAULT 1,
-            exp INTEGER DEFAULT 0,
-            hp INTEGER DEFAULT 100,
-            max_hp INTEGER DEFAULT 100,
-            mp INTEGER DEFAULT 50,
-            max_mp INTEGER DEFAULT 50,
-            stamina INTEGER DEFAULT 100,
-            max_stamina INTEGER DEFAULT 100,
-            atk INTEGER DEFAULT 25,
-            def INTEGER DEFAULT 10,
-            gold INTEGER DEFAULT 100,
-            weapon_name TEXT,
-            weapon_atk INTEGER DEFAULT 0,
-            armor_name TEXT,
-            armor_def INTEGER DEFAULT 0,
-            cooking_level INTEGER DEFAULT 1,
-            rod_durability INTEGER DEFAULT 20
-        )
-    """)
-
-    # 🛡️ 自動檢查並補上任何可能缺少的欄位（防止舊資料庫報錯）
-    cursor.execute("PRAGMA table_info(players)")
-    columns = [column[1] for column in cursor.fetchall()]
-
-    try:
-        cursor.execute("ALTER TABLE players ADD COLUMN rod_durability INTEGER DEFAULT 20")
-        conn.commit()
-    except:
-        pass
-    
-    required_columns = {
-        "role_name": "TEXT",
-        "level": "INTEGER DEFAULT 1",
-        "exp": "INTEGER DEFAULT 0",
-        "hp": "INTEGER DEFAULT 100",
-        "max_hp": "INTEGER DEFAULT 100",
-        "mp": "INTEGER DEFAULT 50",
-        "max_mp": "INTEGER DEFAULT 50",
-        "stamina": "INTEGER DEFAULT 100",
-        "max_stamina": "INTEGER DEFAULT 100",
-        "atk": "INTEGER DEFAULT 25",
-        "def": "INTEGER DEFAULT 10",
-        "gold": "INTEGER DEFAULT 100",
-        "weapon_name": "TEXT",
-        "weapon_atk": "INTEGER DEFAULT 0",
-        "armor_name": "TEXT",
-        "armor_def": "INTEGER DEFAULT 0",
-        "cooking_level": "INTEGER DEFAULT 1"
-    }
-    
-    for col_name, col_type in required_columns.items():
-        if col_name not in columns:
-            cursor.execute(f"ALTER TABLE players ADD COLUMN {col_name} {col_type}")
-
-    # 2. 玩家背包表
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS inventory (
-            user_id INTEGER,
-            item_name TEXT,
-            quantity INTEGER,
-            PRIMARY KEY (user_id, item_name)
-        )
-    """)
-
-    # 3. 農場土地表
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS farm_plots (
-            user_id INTEGER,
-            plot_index INTEGER,
-            crop_name TEXT,
-            ready_timestamp REAL,
-            status TEXT DEFAULT 'empty',
-            PRIMARY KEY (user_id, plot_index)
-        )
-    """)
-
-    # 4. 玩家已解鎖食譜表
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS player_recipes (
-            user_id INTEGER,
-            recipe_name TEXT,
-            PRIMARY KEY (user_id, recipe_name)
-        )
-    """)
-
-    # 5. 牧場動物表
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS ranch_animals (
-            user_id INTEGER,
-            animal_index INTEGER,
-            animal_type TEXT,
-            feed_timestamp REAL,
-            status TEXT DEFAULT 'ready',
-            PRIMARY KEY (user_id, animal_index)
-        )
-    """)
-
-    # 🐾 寵物資料表
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS pets (
-            user_id INTEGER,
-            pet_name TEXT,
-            pet_type TEXT,
-            hunger INTEGER DEFAULT 100,
-            status TEXT DEFAULT '健康',
-            PRIMARY KEY (user_id, pet_name)
-        )
-    """)
-
-    # 🏠 個人莊園資料表
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS manors (
-            user_id INTEGER PRIMARY KEY,
-            manor_lvl INTEGER DEFAULT 1,
-            room_unlocked TEXT DEFAULT '基礎臥室',
-            last_harvest TEXT DEFAULT '2026-01-01 00:00:00'
-        )
-    """)
-    
-    # 📦 莊園倉庫資料表
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS manor_storage (
-            user_id INTEGER,
-            item_name TEXT,
-            quantity INTEGER DEFAULT 0,
-            PRIMARY KEY (user_id, item_name)
-        )
-    """)
-    
-    # 檢查 players 是否有 max_bag_slots (預設隨身背包 20 格)
-    try:
-        cursor.execute("ALTER TABLE players ADD COLUMN weapon_durability INTEGER DEFAULT 50")
-    except:
-        pass
-    try:
-        cursor.execute("ALTER TABLE players ADD COLUMN armor_durability INTEGER DEFAULT 50")
-    except:
-        pass
-
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-
-# ==================== 🛒 商城購買邏輯 ====================
+# ==================== 🛒 商城購買與出售邏輯 ====================
 def buy_item_in_db(user_id: int, item_name: str, quantity: int):
     if quantity <= 0:
         return False, "❌ 購買數量必須大於 0！"
-    if item_name not in shop_prices:
+    if item_name not in SHOP_ITEMS:
         return False, f"❌ 商城中找不到 **{item_name}** 這個商品！"
 
-    unit_price = shop_prices[item_name]
-    total_cost = unit_price * quantity
+    total_cost = SHOP_ITEMS[item_name]["price"] * quantity
 
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT gold FROM players WHERE user_id = ?", (user_id,))
+        cursor.execute("SELECT gold, max_bag_slots FROM players WHERE user_id = ?", (user_id,))
         player = cursor.fetchone()
+
         if not player:
-            return False, "❌ 你尚未建立角色！請先選擇職業。"
-        
-        current_gold = player["gold"] or 0
-        if current_gold < total_cost:
-            return False, f"❌ 金幣不足！購買需要 `{total_cost} G`（目前有 `{current_gold} G`）。"
+            return False, "⚠️ 你尚未建立角色！請先使用 `/setup_roles` 選擇職業。"
+
+        max_slots = player["max_bag_slots"] if "max_bag_slots" in player.keys() and player["max_bag_slots"] else 20
+
+        if player["gold"] < total_cost:
+            return False, f"❌ 金幣不足！購買 `{quantity}` 個 **{item_name}** 需要 `{total_cost} G`，你只有 `{player['gold']} G`。"
+
+        cursor.execute("SELECT COUNT(*) as current_slots FROM inventory WHERE user_id = ? AND quantity > 0", (user_id,))
+        current_slots = cursor.fetchone()["current_slots"]
+
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
+        inv = cursor.fetchone()
+
+        if not inv and current_slots >= max_slots:
+            return False, f"⚠️ 你的隨身背包已滿 (`{current_slots}/{max_slots}` 格)！無法放入新商品 **{item_name}**。\n💡 請先將多餘物品放入莊園倉庫。"
 
         cursor.execute("UPDATE players SET gold = gold - ? WHERE user_id = ?", (total_cost, user_id))
 
-        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
-        existing = cursor.fetchone()
-        
-        if existing:
+        if inv:
             cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (quantity, user_id, item_name))
         else:
             cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (user_id, item_name, quantity))
 
         conn.commit()
-        return True, f"🎉 成功購買 **{item_name}** x `{quantity}`！\n💰 總共花費：`{total_cost} G`"
+        return True, f"🎉 成功購買 **{item_name}** x `{quantity}`！共花費 `{total_cost} G`。"
     except Exception as e:
         conn.rollback()
-        return False, f"❌ 購買發生錯誤：`{e}`"
+        return False, f"❌ 交易失敗：`{e}`"
     finally:
         cursor.close()
         conn.close()
 
-
-# ==================== 🌾 農場系統相關函數 ====================
-def get_player_farm(user_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT COUNT(*) FROM farm_plots WHERE user_id = ?", (user_id,))
-        if cursor.fetchone()[0] == 0:
-            for i in range(1, 4):
-                cursor.execute("INSERT INTO farm_plots (user_id, plot_index, status) VALUES (?, ?, 'empty')", (user_id, i))
-            conn.commit()
-            
-        cursor.execute("SELECT plot_index, crop_name, ready_timestamp, status FROM farm_plots WHERE user_id = ? ORDER BY plot_index", (user_id,))
-        plots = cursor.fetchall()
-        return plots
-    finally:
-        cursor.close()
-        conn.close()
-
-# ==================== 💰 系統商店回收／販賣邏輯 ====================
 def sell_item_to_shop_in_db(user_id: int, item_name: str, quantity: int):
     if quantity <= 0:
         return False, "❌ 販賣數量必須大於 0！"
@@ -1408,7 +933,24 @@ def sell_item_to_shop_in_db(user_id: int, item_name: str, quantity: int):
         cursor.close()
         conn.close()
 
-# ==================== 🍳 料理製作與升級邏輯 (含背包容量限制) ====================
+# ==================== 🌾 農場系統 ====================
+def get_player_farm(user_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT COUNT(*) FROM farm_plots WHERE user_id = ?", (user_id,))
+        if cursor.fetchone()[0] == 0:
+            for i in range(1, 4):
+                cursor.execute("INSERT INTO farm_plots (user_id, plot_index, status) VALUES (?, ?, 'empty')", (user_id, i))
+            conn.commit()
+            
+        cursor.execute("SELECT plot_index, crop_name, ready_timestamp, status FROM farm_plots WHERE user_id = ? ORDER BY plot_index", (user_id,))
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+# ==================== 🍳 料理系統 ====================
 def cook_recipe_in_db(user_id: int, recipe_name: str):
     if recipe_name not in RECIPE_DATABASE:
         return False, f"❌ 找不到食譜 **{recipe_name}**！"
@@ -1421,7 +963,6 @@ def cook_recipe_in_db(user_id: int, recipe_name: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        # 1. 檢查玩家等級與背包上限設定
         cursor.execute("SELECT cooking_level, max_bag_slots FROM players WHERE user_id = ?", (user_id,))
         player = cursor.fetchone()
         if not player:
@@ -1433,7 +974,6 @@ def cook_recipe_in_db(user_id: int, recipe_name: str):
         if current_level < required_level:
             return False, f"❌ 料理台等級不足！製作 **{recipe_name}** 需要 Lv.{required_level}。"
 
-        # 2. 檢查材料是否充足
         for ing_name, req_qty in ingredients.items():
             cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, ing_name))
             inv = cursor.fetchone()
@@ -1441,22 +981,18 @@ def cook_recipe_in_db(user_id: int, recipe_name: str):
             if current_qty < req_qty:
                 return False, f"❌ 素材不足！缺少 **{ing_name}**（需要 `{req_qty}` 個）。"
 
-        # 3. 📦 檢查隨身背包容量上限 (最高 20 格種類限制)
         cursor.execute("SELECT COUNT(*) as current_slots FROM inventory WHERE user_id = ? AND quantity > 0", (user_id,))
         current_slots = cursor.fetchone()["current_slots"]
 
         cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, output_item))
         out_inv = cursor.fetchone()
 
-        # 若成品為新種類且背包格子已滿
         if not out_inv and current_slots >= max_slots:
-            return False, f"⚠️ 你的隨身背包已滿 (`{current_slots}/{max_slots}` 格)，無法放下新完成的料理【{output_item}】！\n💡 請先使用 `/存入倉庫` 整理背包。"
+            return False, f"⚠️ 你的隨身背包已滿 (`{current_slots}/{max_slots}` 格)，無法放下新完成的料理【{output_item}】！\n💡 請先整理背包。"
 
-        # 4. 扣除材料
         for ing_name, req_qty in ingredients.items():
             cursor.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?", (req_qty, user_id, ing_name))
 
-        # 5. 發放成品
         if out_inv:
             cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, output_item))
         else:
@@ -1513,72 +1049,30 @@ def upgrade_cooking_station_in_db(user_id: int):
         cursor.close()
         conn.close()
 
-
-# ==================== 🗑️ 重製玩家資料邏輯 ====================
-def reset_player_data(user_id: int):
+# ==================== 🗑️ 刪除/重置玩家資料邏輯 ====================
+def delete_player_data(user_id: int):
+    """徹底清除指定玩家的所有紀錄（包含玩家表、背包、農場、寵物、莊園等）"""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("DELETE FROM players WHERE user_id = ?", (user_id,))
         cursor.execute("DELETE FROM inventory WHERE user_id = ?", (user_id,))
-        cursor.execute("DELETE FROM farm_plots WHERE user_id = ?", (user_id,))  # 這裡原本多了一個 / 符號
+        cursor.execute("DELETE FROM farm_plots WHERE user_id = ?", (user_id,))
         cursor.execute("DELETE FROM player_recipes WHERE user_id = ?", (user_id,))
         cursor.execute("DELETE FROM ranch_animals WHERE user_id = ?", (user_id,))
+        cursor.execute("DELETE FROM pets WHERE user_id = ?", (user_id,))
+        cursor.execute("DELETE FROM manors WHERE user_id = ?", (user_id,))
+        cursor.execute("DELETE FROM manor_storage WHERE user_id = ?", (user_id,))
+        cursor.execute("DELETE FROM market_listings WHERE seller_id = ?", (user_id,))
         conn.commit()
+        return True
     except Exception as e:
         conn.rollback()
-        raise e
+        print(f"❌ 刪除玩家資料失敗: {e}")
+        return False
     finally:
         cursor.close()
         conn.close()
 
-def buy_item_in_db(user_id, item_name, quantity):
-    if item_name not in SHOP_ITEMS:
-        return False, "❌ 商店中沒有這項商品！"
-
-    item_data = SHOP_ITEMS[item_name]
-    total_cost = item_data["price"] * quantity
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        # 1. 檢查玩家金幣與背包上限
-        cursor.execute("SELECT gold, max_bag_slots FROM players WHERE user_id = ?", (user_id,))
-        player = cursor.fetchone()
-
-        if not player:
-            return False, "⚠️ 你尚未建立角色！請先使用 `/setup_roles` 選擇職業。"
-
-        max_slots = player["max_bag_slots"] if "max_bag_slots" in player.keys() and player["max_bag_slots"] else 20
-
-        if player["gold"] < total_cost:
-            return False, f"❌ 金幣不足！購買 `{quantity}` 個 **{item_name}** 需要 `{total_cost} G`，你只有 `{player['gold']} G`。"
-
-        # 2. 檢查背包空間 (防範超過 20 格種類上限)
-        cursor.execute("SELECT COUNT(*) as current_slots FROM inventory WHERE user_id = ? AND quantity > 0", (user_id,))
-        current_slots = cursor.fetchone()["current_slots"]
-
-        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item_name))
-        inv = cursor.fetchone()
-
-        # 如果背包裡沒有這項商品（是新種類），且格數已滿
-        if not inv and current_slots >= max_slots:
-            return False, f"⚠️ 你的隨身背包已滿 (`{current_slots}/{max_slots}` 格)！無法放入新商品 **{item_name}**。\n💡 請先使用 `/存入倉庫` 將多餘物品放入莊園倉庫。"
-
-        # 3. 扣款
-        cursor.execute("UPDATE players SET gold = gold - ? WHERE user_id = ?", (total_cost, user_id))
-
-        # 4. 增加背包物品
-        if inv:
-            cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (quantity, user_id, item_name))
-        else:
-            cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (user_id, item_name, quantity))
-
-        conn.commit()
-        return True, f"🎉 成功購買 **{item_name}** x `{quantity}`！共花費 `{total_cost} G`。"
-    except Exception as e:
-        conn.rollback()
-        return False, f"❌ 交易失敗：`{e}`"
-    finally:
-        cursor.close()
-        conn.close()
+def reset_player_data(user_id: int):
+    return delete_player_data(user_id)
